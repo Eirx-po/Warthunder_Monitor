@@ -29,6 +29,15 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AIR_HUD = os.path.join(BASE_DIR, "wt_air_hud", "main.py")
 GROUND_HUD = os.path.join(BASE_DIR, "wt_hud_v2.py")
 
+# ⚠ 用 CREATE_NO_WINDOW，不是 CREATE_NEW_CONSOLE。
+# 陆战里上飞机/被打下来会来回切模式，每次切换弹一个黑色 CMD 窗口会严重干扰游戏。
+# 0x08000000 = CREATE_NO_WINDOW：进程照常跑，但不分配控制台、不抢焦点。
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _spawn_flags():
+    return CREATE_NO_WINDOW if os.name == "nt" else 0
+
 # 模式常量
 MODE_NONE = "none"       # 机库/菜单/游戏未运行
 MODE_AIR = "air"         # 空战
@@ -52,7 +61,9 @@ def game_running():
 
 def hud_pids():
     """扫出所有 HUD 进程 PID（含不是本守护拉起的），用于清理残留"""
-    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+    # ⚠ 同时匹配 pythonw.exe，否则用 pythonw 起的 HUD 扫不到、清不掉
+    ps = ("Get-CimInstance Win32_Process -Filter \""
+          "Name='python.exe' OR Name='pythonw.exe'\" | "
           "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
     try:
         out = subprocess.run(
@@ -144,16 +155,27 @@ def launch_hud(script_path, label, proc_holder):
             print(f"  [{label}] 已在运行，跳过")
             return
 
+    # 没有控制台窗口了，输出重定向到日志文件，否则出错时啥也看不到
+    log_path = os.path.join(BASE_DIR, f"wt_hud_{label}.log")
+    try:
+        logf = open(log_path, "a", encoding="utf-8", errors="replace")
+        logf.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 启动 =====\n")
+        logf.flush()
+    except Exception:
+        logf = None
+
     print(f"  [{label}] 启动中...", flush=True)
-    flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
     proc = subprocess.Popen(
         [PYTHON, "-u", script_path],
         cwd=os.path.dirname(script_path),
-        creationflags=flags,
+        creationflags=_spawn_flags(),
+        stdout=logf, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
     )
     proc_holder[script_path] = proc
     time.sleep(0.8)
-    print(f"  [{label}] 已启动 (PID {proc.pid}) ✅", flush=True)
+    print(f"  [{label}] 已启动 (PID {proc.pid})，日志: {os.path.basename(log_path)} ✅",
+          flush=True)
     return proc
 
 
@@ -188,8 +210,14 @@ def run_watch():
     proc_holder = {}  # script_path -> Popen or None
     current_mode = None
     mode_confirm_count = 0
-    required_confirm = 3  # 连续 N 次相同才切换（去抖）
     last_print = ""
+
+    # 去抖：连续 N 次读到同一模式才切换（每轮 1.5s）
+    CONFIRM_FIRST = 3     # 首次启动：3 次 ≈ 4.5s，尽快出 HUD
+    CONFIRM_SWITCH = 5    # 空战↔陆战互切：5 次 ≈ 7.5s
+    # ⚠ 互切要给更长的确认窗口：陆战里上飞机/被打下来会在两种载具间反复横跳，
+    #   确认太短会导致 HUD 反复重启（即使没有 CMD 窗口，画面也会闪）
+    CONFIRM_STOP = 3      # 收起 HUD（回机库/游戏退出）
 
     def ensure_hud(mode):
         """确保对应模式的 HUD 在运行，停掉其他"""
@@ -230,7 +258,13 @@ def run_watch():
 
             if mode != current_mode:
                 mode_confirm_count += 1
-                if mode_confirm_count >= required_confirm:
+                if current_mode is None:
+                    need = CONFIRM_FIRST          # 还没 HUD，尽快起来
+                elif mode == MODE_NONE or current_mode == MODE_NONE:
+                    need = CONFIRM_STOP           # 收起/恢复
+                else:
+                    need = CONFIRM_SWITCH         # 空战↔陆战互切，多等一会儿防抖
+                if mode_confirm_count >= need:
                     # 确认模式变化，执行切换
                     if current_mode is not None:
                         print(f"  模式切换: {current_mode} -> {mode}", flush=True)

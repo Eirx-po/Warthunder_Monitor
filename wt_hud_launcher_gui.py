@@ -59,6 +59,14 @@ PYTHON = (r"C:\Users\Administrator\.workbuddy\binaries\python"
 if not os.path.exists(PYTHON):
     PYTHON = sys.executable
 
+# ⚠ 子进程一律 CREATE_NO_WINDOW（0x08000000），不要用 CREATE_NEW_CONSOLE。
+# 陆战里上飞机/被打下来会来回切 HUD，每切一次弹一个黑色 CMD 窗口非常干扰游戏。
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _spawn_flags():
+    return CREATE_NO_WINDOW if os.name == "nt" else 0
+
 BG = QColor(18, 22, 30)
 FG = QColor(225, 230, 240)
 MUTED = QColor(140, 150, 165)
@@ -110,7 +118,10 @@ def _scan_pids(scripts):
     except Exception:
         pass
 
-    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+    # ⚠ 必须同时匹配 pythonw.exe：用 pythonw 启动的进程名不是 python.exe，
+    # 漏了它会导致守护/HUD 在扫描里"隐身"，停止失效（2026-09-22）
+    ps = ("Get-CimInstance Win32_Process -Filter \""
+          "Name='python.exe' OR Name='pythonw.exe'\" | "
           "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
     try:
         out = subprocess.run(
@@ -327,7 +338,7 @@ class Launcher(QMainWindow):
             return
         name = os.path.basename(script)
         try:
-            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+            flags = _spawn_flags()
             self.proc = subprocess.Popen(
                 [PYTHON, "-u", script], cwd=os.path.dirname(script),
                 env=self.build_env(), creationflags=flags)
@@ -369,7 +380,7 @@ class Launcher(QMainWindow):
             self.say(f"找不到脚本: {DAEMON}")
             return
         try:
-            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+            flags = _spawn_flags()
             self.auto_proc = subprocess.Popen(
                 [PYTHON, "-u", DAEMON, "--watch"], cwd=os.path.dirname(DAEMON),
                 env=self.build_env(), creationflags=flags)
@@ -417,7 +428,7 @@ class Launcher(QMainWindow):
             self.say(f"找不到脚本: {POWER_CURVE}")
             return
         try:
-            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+            flags = _spawn_flags()
             self.tool_proc = subprocess.Popen(
                 [PYTHON, "-u", POWER_CURVE], cwd=os.path.dirname(POWER_CURVE),
                 creationflags=flags)
