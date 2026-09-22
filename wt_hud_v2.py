@@ -99,103 +99,114 @@ class DataThread(threading.Thread):
 
     def run(self):
         while self.running:
-            data = {"ts": time.time()}
-            ind = self.fetch("/indicators")
-            data["ind"] = ind if isinstance(ind, dict) else {}
-            mobj = self.fetch("/map_obj.json")
-            data["map_obj"] = mobj if isinstance(mobj, list) else []
-            mi = self.fetch("/map_info.json")
-            data["map_info"] = mi if isinstance(mi, dict) else {}
+            try:
+                data = {"ts": time.time()}
+                ind = self.fetch("/indicators")
+                data["ind"] = ind if isinstance(ind, dict) else {}
+                mobj = self.fetch("/map_obj.json")
+                data["map_obj"] = mobj if isinstance(mobj, list) else []
+                mi = self.fetch("/map_info.json")
+                data["map_info"] = mi if isinstance(mi, dict) else {}
 
-            # 地图版本变化时重新下载底图
-            map_gen = mi.get("map_generation") if isinstance(mi, dict) else None
-            if map_gen is not None and map_gen != self._last_map_gen:
-                self._last_map_gen = map_gen
-                self.fetch_map_image()
-            data["map_image"] = self._map_image
+                # ⚠ 必须在解析坐标之前算好：下面 dx_m/dy_m 与 target_mgr.map_span
+                # 都依赖它。漏掉这行会抛 NameError: name 'span' is not defined，
+                # 数据线程直接死掉 → HUD 一直空白（2026-09-22 修）。
+                span = self.map_span(data["map_info"])
 
-            # 解析
-            player = None
-            enemies = []
-            allies = []
-            zones = []
-            for obj in data["map_obj"]:
-                if not isinstance(obj, dict):
-                    continue
-                color = obj.get("color", "")
-                icon = obj.get("icon", "")
-                otype = obj.get("type", "")
-                if icon == "Player":
-                    player = obj
-                elif otype == "capture_zone":
-                    zones.append(obj)
-                elif otype in ("ground_model", "aircraft"):
-                    # 用 RGB 色系判定，覆盖 WT 的所有红/蓝变体
-                    # （实测敌方地面单位用 #f00C00，旧硬编码列表会漏判）
-                    is_enemy = is_enemy_color(color)
-                    is_friend = is_friend_color(color)
-                    kind = "air" if otype == "aircraft" else "tank"
-                    entry = {"kind": kind, "icon": icon, "color": color,
-                             "x": obj.get("x", 0), "y": obj.get("y", 0),
-                             "dx": obj.get("dx", 0), "dy": obj.get("dy", 0)}
-                    if is_enemy:
-                        enemies.append(entry)
-                    elif is_friend:
-                        allies.append(entry)
+                # 地图版本变化时重新下载底图
+                map_gen = mi.get("map_generation") if isinstance(mi, dict) else None
+                if map_gen is not None and map_gen != self._last_map_gen:
+                    self._last_map_gen = map_gen
+                    self.fetch_map_image()
+                data["map_image"] = self._map_image
 
-            # 计算距离方位
-            if player:
-                px, py = player["x"], player["y"]
-                # 玩家朝向（地图方向向量 dx/dy → 航向角，0=东 90=南）
-                p_dx, p_dy = player.get("dx", 0), player.get("dy", 0)
-                if p_dx != 0 or p_dy != 0:
-                    player["heading"] = (math.degrees(math.atan2(p_dy, p_dx)) + 360) % 360
+                # 解析
+                player = None
+                enemies = []
+                allies = []
+                zones = []
+                for obj in data["map_obj"]:
+                    if not isinstance(obj, dict):
+                        continue
+                    color = obj.get("color", "")
+                    icon = obj.get("icon", "")
+                    otype = obj.get("type", "")
+                    if icon == "Player":
+                        player = obj
+                    elif otype == "capture_zone":
+                        zones.append(obj)
+                    elif otype in ("ground_model", "aircraft"):
+                        # 用 RGB 色系判定，覆盖 WT 的所有红/蓝变体
+                        # （实测敌方地面单位用 #f00C00，旧硬编码列表会漏判）
+                        is_enemy = is_enemy_color(color)
+                        is_friend = is_friend_color(color)
+                        kind = "air" if otype == "aircraft" else "tank"
+                        entry = {"kind": kind, "icon": icon, "color": color,
+                                 "x": obj.get("x", 0), "y": obj.get("y", 0),
+                                 "dx": obj.get("dx", 0), "dy": obj.get("dy", 0)}
+                        if is_enemy:
+                            enemies.append(entry)
+                        elif is_friend:
+                            allies.append(entry)
+
+                # 计算距离方位
+                if player:
+                    px, py = player["x"], player["y"]
+                    # 玩家朝向（地图方向向量 dx/dy → 航向角，0=东 90=南）
+                    p_dx, p_dy = player.get("dx", 0), player.get("dy", 0)
+                    if p_dx != 0 or p_dy != 0:
+                        player["heading"] = (math.degrees(math.atan2(p_dy, p_dx)) + 360) % 360
+                    else:
+                        player["heading"] = 0
+                    for e in enemies:
+                        dx_m = (e["x"] - px) * span
+                        dy_m = (e["y"] - py) * span
+                        e["dist"] = math.sqrt(dx_m**2 + dy_m**2)
+                        e["bearing"] = math.degrees(math.atan2(dy_m, dx_m))
+                    enemies.sort(key=lambda x: x.get("dist", 9999))
+                    for a in allies:
+                        dx_m = (a["x"] - px) * span
+                        dy_m = (a["y"] - py) * span
+                        a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
+                        a["bearing"] = math.degrees(math.atan2(dy_m, dx_m))
+
+                    # ---- 目标聚类去重：一个逻辑目标只产生一个箭头 ----
+                    # 8111 会把一个防空阵地拆成多条记录（坐标只差几米），
+                    # 逐条画箭头会重叠成"残影"。这里先按位置合并。
+                    units = []
+                    for e in enemies:
+                        units.append({
+                            "x": e["x"], "y": e["y"],
+                            "kind": e["kind"], "icon": e["icon"],
+                            "bearing": e.get("bearing", 0.0),
+                            "dist": e.get("dist", 0.0),
+                        })
+                    self.target_mgr.map_span = span
+                    targets = self.target_mgr.update(units)
+                    p_heading = player.get("heading", 0)
+                    for t in targets:
+                        # 陆战使用数学角（0=东，逆时针为正 → 左侧为正）
+                        # 统一转换为屏幕约定（0=正前，右侧为正）→ 取负
+                        t.rel_bearing = -norm180(t.bearing - p_heading)
+                        t.rel_dist = t.dist
+                    player["heading_smoothed"] = p_heading
+
                 else:
-                    player["heading"] = 0
-                for e in enemies:
-                    dx_m = (e["x"] - px) * span
-                    dy_m = (e["y"] - py) * span
-                    e["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                    e["bearing"] = math.degrees(math.atan2(dy_m, dx_m))
-                enemies.sort(key=lambda x: x.get("dist", 9999))
-                for a in allies:
-                    dx_m = (a["x"] - px) * span
-                    dy_m = (a["y"] - py) * span
-                    a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                    a["bearing"] = math.degrees(math.atan2(dy_m, dx_m))
+                    targets = []
 
-                # ---- 目标聚类去重：一个逻辑目标只产生一个箭头 ----
-                # 8111 会把一个防空阵地拆成多条记录（坐标只差几米），
-                # 逐条画箭头会重叠成"残影"。这里先按位置合并。
-                units = []
-                for e in enemies:
-                    units.append({
-                        "x": e["x"], "y": e["y"],
-                        "kind": e["kind"], "icon": e["icon"],
-                        "bearing": e.get("bearing", 0.0),
-                        "dist": e.get("dist", 0.0),
-                    })
-                self.target_mgr.map_span = span
-                targets = self.target_mgr.update(units)
-                p_heading = player.get("heading", 0)
-                for t in targets:
-                    # 陆战使用数学角（0=东，逆时针为正 → 左侧为正）
-                    # 统一转换为屏幕约定（0=正前，右侧为正）→ 取负
-                    t.rel_bearing = -norm180(t.bearing - p_heading)
-                    t.rel_dist = t.dist
-                player["heading_smoothed"] = p_heading
+                data["player"] = player
+                data["enemies"] = enemies
+                data["targets"] = targets
+                data["allies"] = allies
+                data["zones"] = zones
 
-            else:
-                targets = []
+                with self.lock:
+                    self.data = data
 
-            data["player"] = player
-            data["enemies"] = enemies
-            data["targets"] = targets
-            data["allies"] = allies
-            data["zones"] = zones
-
-            with self.lock:
-                self.data = data
+            except Exception as e:
+                # 单帧异常不能让数据线程整个死掉 —— 否则 HUD 会永久空白且毫无提示
+                print(f"[HUD] 数据线程异常: {type(e).__name__}: {e}", flush=True)
+                import traceback; traceback.print_exc()
 
             time.sleep(0.2)
 
