@@ -35,6 +35,61 @@ GROUND_HUD = os.path.join(BASE_DIR, "wt_hud_v2.py")
 CREATE_NO_WINDOW = 0x08000000
 
 
+# ---- PID 文件：进程登记的"真值来源" ----
+# ⚠ 不要用 PowerShell/wmic 去扫进程：那会在后台不停拉起外部进程
+#   （GUI 每秒刷一次 = 每秒开一次 powershell），弹窗严重影响游戏。
+#   改成启动时写 PID 文件，之后只读文件 + 用 ctypes 验活，零子进程。
+PID_DAEMON = os.path.join(BASE_DIR, ".wt_daemon.pid")
+PID_AIR = os.path.join(BASE_DIR, ".wt_hud_air.pid")
+PID_GROUND = os.path.join(BASE_DIR, ".wt_hud_ground.pid")
+
+
+def write_pid(path, pid):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(pid))
+    except Exception:
+        pass
+
+
+def read_pid(path):
+    """读 PID 文件并验活；失效返回 None 并清理文件"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except Exception:
+        return None
+    try:
+        from wt_foreground import pid_alive
+        alive = pid_alive(pid)
+    except Exception:
+        alive = True          # 验活失败就当活着，别误删
+    if not alive:
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        return None
+    return pid
+
+
+def clear_pid(path):
+    try:
+        os.remove(path)
+    except Exception:
+        pass
+
+
+def hud_pids():
+    """当前活着的 HUD 进程（读 PID 文件，不起外部进程）"""
+    out = []
+    for p in (PID_AIR, PID_GROUND):
+        pid = read_pid(p)
+        if pid:
+            out.append(pid)
+    return out
+
+
 def _spawn_flags():
     return CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -59,28 +114,22 @@ def game_running():
         return True
 
 
-def hud_pids():
-    """扫出所有 HUD 进程 PID（含不是本守护拉起的），用于清理残留"""
-    # ⚠ 同时匹配 pythonw.exe，否则用 pythonw 起的 HUD 扫不到、清不掉
-    ps = ("Get-CimInstance Win32_Process -Filter \""
-          "Name='python.exe' OR Name='pythonw.exe'\" | "
-          "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
+def _hidden_run(args, timeout=15, encoding="utf-8"):
+    """
+    静默执行外部命令（powershell / taskkill）。
+
+    ⚠ 必须带 CREATE_NO_WINDOW：这些都是控制台程序，直接 subprocess.run 会闪黑窗。
+    守护每 1.5 秒扫一次进程，闪窗根本没法打游戏。
+    """
     try:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15)
-        pids = []
-        for line in (out.stdout or "").splitlines():
-            low = line.lower()
-            if ("hud_overlay.py" in low) or ("wt_hud_v2.py" in low):
-                for tok in reversed(line.replace(",", " ").split()):
-                    if tok.isdigit():
-                        pids.append(int(tok))
-                        break
-        return pids
+        return subprocess.run(args, capture_output=True, text=True,
+                              encoding=encoding, errors="replace",
+                              timeout=timeout, creationflags=_spawn_flags(),
+                              stdin=subprocess.DEVNULL)
     except Exception:
-        return []
+        return None
+
+
 
 
 def kill_stray_huds():
@@ -88,8 +137,7 @@ def kill_stray_huds():
     n = 0
     for pid in hud_pids():
         try:
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                           capture_output=True, timeout=5)
+            _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
             n += 1
         except Exception:
             pass
@@ -173,6 +221,8 @@ def launch_hud(script_path, label, proc_holder):
         stdin=subprocess.DEVNULL,
     )
     proc_holder[script_path] = proc
+    # 登记 PID 文件：GUI 靠它判断 HUD 是否在跑，不用去扫进程
+    write_pid(PID_AIR if script_path == AIR_HUD else PID_GROUND, proc.pid)
     time.sleep(0.8)
     print(f"  [{label}] 已启动 (PID {proc.pid})，日志: {os.path.basename(log_path)} ✅",
           flush=True)
@@ -191,11 +241,9 @@ def stop_hud(script_path, proc_holder):
             print(f"  [HUD] 已停止 (PID {proc.pid})", flush=True)
         except Exception:
             print(f"  [HUD] 停止失败，尝试 taskkill", flush=True)
-            try:
-                subprocess.run(["taskkill", "/F", "/PID", str(proc.pid)],
-                               capture_output=True, shell=True)
-            except Exception:
-                pass
+            _hidden_run(["taskkill", "/F", "/PID", str(proc.pid)], timeout=5)
+    # 无论怎么停的，PID 文件都要清掉，否则 GUI 会一直显示"运行中"
+    clear_pid(PID_AIR if script_path == AIR_HUD else PID_GROUND)
     proc_holder[script_path] = None
 
 
@@ -206,6 +254,9 @@ def run_watch():
     print("=" * 50, flush=True)
     print("  监控 localhost:8111，Ctrl+C 退出", flush=True)
     print("", flush=True)
+
+    # 登记守护自己的 PID，GUI 靠它判断自动模式是否在跑
+    write_pid(PID_DAEMON, os.getpid())
 
     proc_holder = {}  # script_path -> Popen or None
     current_mode = None
@@ -287,6 +338,7 @@ def run_watch():
         print("\n  守护模式已退出，停止所有 HUD...", flush=True)
         stop_hud(AIR_HUD, proc_holder)
         stop_hud(GROUND_HUD, proc_holder)
+        clear_pid(PID_DAEMON)
 
 
 def main():

@@ -106,6 +106,28 @@ def war_thunder_pids():
     return pids
 
 
+def pid_alive(pid):
+    """
+    判断 PID 是否还活着（纯 ctypes，不起外部进程）。
+
+    只查退出码，不读内存 —— 之前尝试读 PEB 拿命令行会把解释器搞段错误。
+    """
+    try:
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(h, ctypes.byref(code)):
+                return code.value == 259      # STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(h)
+    except Exception:
+        return False
+
+
 def is_war_thunder_running():
     """游戏进程是否存在（用于"游戏退了就自动关 HUD"）"""
     try:

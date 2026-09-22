@@ -104,48 +104,68 @@ def _pids_from_lines(text, scripts):
     return pids
 
 
-def _scan_pids(scripts):
-    """按命令行关键字扫描 python 进程 PID（wmic 失败自动走 PowerShell CIM）"""
-    try:
-        out = subprocess.run(
-            ["wmic", "process", "where", "name='python.exe'", "get",
-             "processid,commandline", "/format:csv"],
-            capture_output=True, text=True, encoding="gbk", errors="replace",
-            timeout=5)
-        pids = _pids_from_lines(out.stdout or "", scripts)
-        if pids:
-            return pids
-    except Exception:
-        pass
+def _hidden_run(args, timeout=15, encoding="utf-8"):
+    """
+    静默执行外部命令（wmic / powershell / taskkill）。
 
-    # ⚠ 必须同时匹配 pythonw.exe：用 pythonw 启动的进程名不是 python.exe，
-    # 漏了它会导致守护/HUD 在扫描里"隐身"，停止失效（2026-09-22）
+    ⚠ 必须带 CREATE_NO_WINDOW：这些都是控制台程序，直接 subprocess.run
+    会闪一个黑色窗口出来。守护每轮、GUI 每秒都要扫进程，闪窗根本没法打游戏。
+    """
+    try:
+        return subprocess.run(args, capture_output=True, text=True,
+                              encoding=encoding, errors="replace",
+                              timeout=timeout,
+                              creationflags=_spawn_flags(),
+                              stdin=subprocess.DEVNULL)
+    except Exception:
+        return None
+
+
+def _scan_pids(scripts):
+    """
+    【冷路径兜底】按命令行关键字扫进程 —— 会拉起 powershell，很慢且有开销。
+
+    ⚠ 只在 PID 文件缺失时用（比如 HUD 是旧版本启动的、没写 PID 文件）。
+    热路径（刷新状态、启动判断）一律走 wt_hud_launcher 的 PID 文件，
+    否则每秒开一次 powershell 会严重影响游戏。
+    """
     ps = ("Get-CimInstance Win32_Process -Filter \""
           "Name='python.exe' OR Name='pythonw.exe'\" | "
           "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
-    try:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15)
-        return _pids_from_lines(out.stdout or "", scripts)
-    except Exception:
-        return []
+    out = _hidden_run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+        timeout=15)
+    return _pids_from_lines((out.stdout if out else "") or "", scripts)
 
 
 def hud_pids():
     """
-    找出正在运行的 HUD python 进程 PID。
+    当前活着的 HUD 进程 —— **只读 PID 文件，零开销、零子进程**。
 
-    ⚠ wmic 在 Win11 24H2+ 已被移除、在部分沙箱里也会被策略拦截，
-    一旦它不可用且没有兜底，"停止 HUD" 会静默失效（残留 HUD 关不掉）。
-    所以先试 wmic，失败再走 PowerShell CIM。
+    ⚠ 热路径（每秒刷新状态）必须走这里。不要在里面做进程扫描：
+    PID 文件缺失时会退化成"每 3 秒开一次 powershell"。
+    """
+    from wt_hud_launcher import hud_pids as _by_file
+    return _by_file()
+
+
+def hud_pids_scan():
+    """
+    【仅用户主动操作调用】进程级扫描，能捞到没写 PID 文件的旧 HUD。
+    会拉起 powershell，所以只在"停止/清理"这种一次性动作里用。
     """
     return _scan_pids(HUD_SCRIPTS)
 
 
 def daemon_pids():
-    """找出正在运行的守护进程 PID（自动按载具切换模式）"""
+    """当前活着的守护进程 PID（读 PID 文件）"""
+    from wt_hud_launcher import read_pid, PID_DAEMON
+    pid = read_pid(PID_DAEMON)
+    return [pid] if pid else []
+
+
+def daemon_pids_scan():
+    """【仅一次性操作调用】进程级扫描守护进程"""
     return _scan_pids(("wt_hud_launcher.py",))
 
 
@@ -300,7 +320,18 @@ class Launcher(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(1000)
+        # PID 扫描走 PowerShell（外部进程），不能每秒都拉：
+        # 缓存 3 秒，状态文字照样每秒更新
+        self._pids_cache = []
+        self._pids_ts = 0.0
         self.refresh()
+
+    def _cached_hud_pids(self, max_age=3.0):
+        now = time.time()
+        if now - self._pids_ts >= max_age:
+            self._pids_cache = hud_pids()
+            self._pids_ts = now
+        return self._pids_cache
 
     def say(self, msg):
         ts = time.strftime("%H:%M:%S")
@@ -357,21 +388,18 @@ class Launcher(QMainWindow):
         # 自动切换也一并关掉：否则守护进程会立刻把 HUD 又拉起来，
         # 用户点了"停止 HUD"却看到它自己复活，很困惑
         self.stop_auto(silent=True)
-        # 再清理残留（比如别的途径启动的）
-        for pid in hud_pids():
-            try:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                               capture_output=True, timeout=5)
-            except Exception:
-                pass
+        # 再清理残留：这里是一次性操作，可以用进程扫描捞没登记 PID 文件的旧 HUD
+        for pid in hud_pids_scan():
+            _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
         if not silent:
             self.say("已停止 HUD")
 
     def start_auto(self):
         """启动守护进程：按载具自动选空战/陆战 HUD（GUI 唯一的启动方式）"""
         # ⚠ 必须做系统级检查：只看 self.auto_proc 的话，
-        # 已经有一个守护在跑（比如命令行拉起的）时会再起一个，两个守护互相打架
-        existing = daemon_pids()
+        # 已经有一个守护在跑（比如命令行拉起的）时会再起一个，两个守护互相打架。
+        # 启动时才做一次进程扫描（一次性开销），刷新状态不做。
+        existing = daemon_pids() or daemon_pids_scan()
         if existing:
             self.auto_proc = None
             self.say(f"自动模式已在运行 (PID {', '.join(map(str, existing))})")
@@ -396,20 +424,12 @@ class Launcher(QMainWindow):
             except Exception:
                 pass
         self.auto_proc = None
-        # 清掉可能由别的途径拉起的守护进程
-        for pid in daemon_pids():
-            try:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                               capture_output=True, timeout=5)
-            except Exception:
-                pass
+        # 清掉可能由别的途径拉起的守护进程（一次性操作，可用扫描）
+        for pid in daemon_pids() or daemon_pids_scan():
+            _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
         # 顺带收掉守护拉起的 HUD：否则关了自动切换，屏幕上还留着一个 HUD，很莫名
-        for pid in hud_pids():
-            try:
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                               capture_output=True, timeout=5)
-            except Exception:
-                pass
+        for pid in hud_pids_scan():
+            _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
         if not silent:
             self.say("已关闭自动切换")
 
@@ -541,7 +561,7 @@ class Launcher(QMainWindow):
             self.lb_mode.setText(f"模式: {desc}")
             self.lb_mode.setStyleSheet(f"color: {GREEN.name()}")
 
-        pids = hud_pids()
+        pids = self._cached_hud_pids()
         if pids:
             self.lb_hud.setText(f"HUD: 运行中 (PID {', '.join(map(str, pids))})")
             self.lb_hud.setStyleSheet(f"color: {GREEN.name()}")
