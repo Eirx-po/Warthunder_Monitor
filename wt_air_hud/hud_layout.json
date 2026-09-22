@@ -1,0 +1,21 @@
+{
+  "_说明": "面板位置：TL 左上 / TR 右上 / BL 左下 / BR 右下 / OFF 不显示。改完重启 HUD 生效。",
+  "_默认": "飞行数据与战斗指标已合并为一个窗口（FLIGHT/COMBAT）放左下，target 右下，右上整块留给游戏小地图",
+  "_注意": "combat 已并入 flight，不要单独启用 combat（会导致内容重复）",
+  "_偏移": "offset 里可对每个面板做像素微调，格式 [dx, dy]，负 dx = 左移、负 dy = 上移",
+  "flight": "BL",
+  "target": "BR",
+  "combat": "OFF",
+  "engine": "OFF",
+  "threat": "OFF",
+  "offset": {
+    "target": [
+      -300,
+      0
+    ]
+  },
+  "ui": {
+    "scale": 0.8,
+    "font": "Microsoft YaHei"
+  }
+}

@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>战争雷霆 GitHub 插件/工具汇总</title>
+<style>
+:root{
+  --bg:#f5f7fa; --card:#ffffff; --border:#e2e8f0; --text:#1a202c; --muted:#64748b;
+  --red:#e53e3e; --green:#38a169; --blue:#3182ce; --orange:#dd6b20; --purple:#805ad5;
+  --tag-bg:#edf2f7;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.7;padding:20px;max-width:1100px;margin:0 auto;}
+h1{text-align:center;font-size:1.7em;margin-bottom:5px;color:var(--text);}
+.subtitle{text-align:center;color:var(--muted);font-size:.9em;margin-bottom:25px;}
+.category{background:var(--card);border:1px solid var(--border);border-radius:10px;
+  margin-bottom:20px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.cat-header{padding:12px 20px;font-size:1.15em;font-weight:700;display:flex;align-items:center;gap:10px;}
+.cat-header .icon{font-size:1.3em;}
+.cat-body{padding:0;}
+.repo{padding:14px 20px;border-top:1px solid var(--border);transition:background .15s;}
+.repo:first-child{border-top:none;}
+.repo:hover{background:#f8fafc;}
+.repo-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;}
+.repo-name{font-weight:700;font-size:1.05em;color:var(--blue);text-decoration:none;}
+.repo-name:hover{text-decoration:underline;}
+.stars{background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:10px;font-size:.8em;font-weight:600;}
+.lang{background:var(--tag-bg);color:var(--muted);padding:1px 8px;border-radius:10px;font-size:.8em;}
+.updated{color:var(--muted);font-size:.8em;}
+.repo-desc{color:#475569;font-size:.95em;margin-bottom:4px;}
+.features{margin-top:4px;padding-left:0;list-style:none;}
+.features li{padding:2px 0 2px 18px;position:relative;font-size:.9em;color:#475569;}
+.features li::before{content:"▸";position:absolute;left:0;color:var(--green);font-weight:bold;}
+.tag{display:inline-block;background:var(--tag-bg);color:var(--muted);padding:1px 7px;border-radius:8px;font-size:.78em;margin-left:6px;}
+.warning{background:#fff5f5;border-left:4px solid var(--red);padding:8px 14px;margin:10px 20px;border-radius:4px;font-size:.85em;color:#c53030;}
+.note{background:#f0fff4;border-left:4px solid var(--green);padding:8px 14px;margin:10px 20px;border-radius:4px;font-size:.85em;color:#276749;}
+.c-blue .cat-header{background:#ebf8ff;color:#2c5282;}
+.c-purple .cat-header{background:#faf5ff;color:#6b46c1;}
+.c-green .cat-header{background:#f0fff4;color:#276749;}
+.c-orange .cat-header{background:#fffaf0;color:#c05621;}
+.c-red .cat-header{background:#fff5f5;color:#c53030;}
+.c-teal .cat-header{background:#e6fffa;color:#2c7a7b;}
+.c-pink .cat-header{background:#fff0f6;color:#97266d;}
+.c-indigo .cat-header{background:#ebf4ff;color:#4c51bf;}
+.c-yellow .cat-header{background:#fffff0;color:#975a16;}
+.c-cyan .cat-header{background:#ecfeff;color:#0987a0;}
+.summary{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 22px;margin-bottom:22px;}
+.summary h2{font-size:1.1em;margin-bottom:8px;}
+.summary ul{padding-left:20px;}
+.summary li{padding:2px 0;}
+footer{text-align:center;color:var(--muted);font-size:.82em;margin-top:25px;padding-top:15px;border-top:1px solid var(--border);}
+</style>
+</head>
+<body>
+
+<h1>🎮 战争雷霆（War Thunder）GitHub 插件/工具汇总</h1>
+<p class="subtitle">按功能分类整理 · 数据来源 GitHub API（按 Star 排序）· 更新于 2026-08-26</p>
+
+<div class="summary">
+  <h2>📊 总览</h2>
+  <ul>
+    <li><strong>共筛选出 28 个活跃/有代表性的项目</strong>，覆盖 HUD 显示、数据挖掘、遥测 API、瞄准镜编辑、资源管理、回放分析、测距辅助、性能计算、Discord 集成、自动化脚本等 10 大类别</li>
+    <li><strong>官方项目 1 个</strong>：GaijinEntertainment/fmod_studio_warthunder_for_modders（声音 Mod 开发）</li>
+    <li><strong>中文社区项目 4 个</strong>：AimerWT、echo-contact-vox、WT-Toolkit、Aokana-Flying-Circus</li>
+    <li>⚠️ 部分自动化/脚本类项目可能违反游戏 ToS，使用需谨慎（已在对应条目标注）</li>
+  </ul>
+</div>
+
+<!-- 1. HUD / 实时信息 -->
+<div class="category c-blue">
+  <div class="cat-header"><span class="icon">📡</span> 一、HUD / 实时信息覆盖层</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/MeSoftHorny/WTRTI" target="_blank">MeSoftHorny/WTRTI</a>
+        <span class="stars">⭐ 236</span><span class="lang">Squirrel</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">高度可定制的 HUD 覆盖层和日志记录工具</div>
+      <ul class="features">
+        <li>实时显示飞行数据（速度、高度、姿态、引擎参数等）</li>
+        <li>多种主题样式可切换，支持自定义 OSD 布局</li>
+        <li>数据绘图/图表功能（暗色模式绘图）</li>
+        <li>通过 localhost:8111 端口读取游戏遥测数据</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/matrixsukhoi/voidmei" target="_blank">matrixsukhoi/voidmei</a>
+        <span class="stars">⭐ 100</span><span class="lang">Java</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">战争雷霆 8111 端口 Java 图形前端</div>
+      <ul class="features">
+        <li>通过 HTTP 读取 127.0.0.1:8111 的飞行状态 (state) 和仪表 (indicators) 数据</li>
+        <li>解析离线拆包的气动模型文件 (FM blkx)</li>
+        <li>图形界面呈现飞行数据处理/计算结果</li>
+        <li>支持 JDK 1.8 编译，可打包为 exe</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/wysiwyng/wthud2" target="_blank">wysiwyng/wthud2</a>
+        <span class="stars">⭐ 22</span><span class="lang">C#</span><span class="updated">更新 2024-06</span>
+      </div>
+      <div class="repo-desc">空战额外数据 HUD 显示（C# / WinForms）</div>
+      <ul class="features">
+        <li>通过 localhost:8111 读取数据，叠加显示额外空战信息</li>
+        <li>支持按机型分别配置显示内容</li>
+        <li>需 .NET Framework 4.7.2，仅支持 Windows</li>
+        <li>需游戏以窗口化或无边框模式运行</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 2. 数据挖掘 / 资源提取 -->
+<div class="category c-purple">
+  <div class="cat-header"><span class="icon">⛏️</span> 二、数据挖掘 / 资源提取</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/gszabi99/War-Thunder-Datamine" target="_blank">gszabi99/War-Thunder-Datamine</a>
+        <span class="stars">⭐ 450</span><span class="lang">Squirrel</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">频繁更新的战争雷霆数据挖掘仓库（最热门 WT 项目之一）</div>
+      <ul class="features">
+        <li>每次游戏更新后自动拆包并推送改动内容</li>
+        <li>包含载具参数、武器数据、配置文件等完整游戏数据</li>
+        <li>是众多其他工具的数据源（如 ThunderView、WTAPC 等）</li>
+        <li>可追踪版本变更，提前发现新载具/新武器</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/klensy/wt-tools" target="_blank">klensy/wt-tools</a>
+        <span class="stars">⭐ 153</span><span class="lang">Python</span><span class="updated">更新 2023-05</span>
+      </div>
+      <div class="repo-desc">战争雷霆资源提取工具集（也兼容 Cuisine Royale / Enlisted）</div>
+      <ul class="features">
+        <li><strong>vromfs_unpacker</strong> — 解包游戏压缩归档 (.vromfs.bin)</li>
+        <li><strong>dxp_unpack</strong> — 解包纹理归档 (.dxp.bin)</li>
+        <li><strong>ddsx_unpack</strong> — 解包纹理文件 (.ddsx → .dds)，需 oo2core_6_win64.dll</li>
+        <li><strong>blk_unpack</strong> — 解包 blk 数据文件为 JSON 或游戏原生格式</li>
+        <li><strong>clog_unpack</strong> — 解密 .clog 日志文件</li>
+        <li><strong>blk_minify</strong> — 压缩 blk 任务文件（突破 512KB 限制，适合 Modder）</li>
+        <li>提供编译好的 exe 版本，无需 Python 环境</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/ImVexed/ThunderView" target="_blank">ImVexed/ThunderView</a>
+        <span class="stars">⭐ 22</span><span class="lang">HTML</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">数据挖掘可视化项目</div>
+      <ul class="features">
+        <li>将 Datamine 仓库的数据以网页形式可视化呈现</li>
+        <li>基于 Hugo 静态站点生成器</li>
+        <li>方便浏览载具/武器配置参数</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/moleium/warre" target="_blank">moleium/warre</a>
+        <span class="stars">⭐ 22</span><span class="lang">C</span><span class="updated">更新 2024-12</span>
+      </div>
+      <div class="repo-desc">逆向工程分析与文档化项目</div>
+      <ul class="features">
+        <li>对战争雷霆客户端进行逆向工程研究</li>
+        <li>文档化内部数据结构和格式</li>
+        <li>基于游戏版本 2.29.0.88</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 3. 遥测 / API -->
+<div class="category c-green">
+  <div class="cat-header"><span class="icon">🔌</span> 三、遥测 / API / 数据接口</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/lucasvmx/WarThunder-localhost-documentation" target="_blank">lucasvmx/WarThunder-localhost-documentation</a>
+        <span class="stars">⭐ 94</span><span class="lang">Python</span><span class="updated">更新 2024-05</span>
+      </div>
+      <div class="repo-desc">localhost:8111 API 完整文档</div>
+      <ul class="features">
+        <li>文档化所有 8111 端口端点：state、indicators、hudmsg、gamechat、map_info、map_obj、mission</li>
+        <li>提供 map.img 地图图像端点说明</li>
+        <li>是众多遥测工具的 API 参考基础</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/PowerBroker2/WarThunder" target="_blank">PowerBroker2/WarThunder</a>
+        <span class="stars">⭐ 67</span><span class="lang">Python</span><span class="updated">更新 2024-07</span>
+      </div>
+      <div class="repo-desc">Python 遥测数据访问包（PyPI 可装）</div>
+      <ul class="features">
+        <li>实时获取己方及小地图上其他玩家的载具遥测</li>
+        <li>位置（经纬度）、航向、空速；己方还有俯仰/滚转/襟翼/起落架/高度</li>
+        <li>获取地图上其他目标信息（机场跑道两端坐标、阵营、类型）</li>
+        <li>地图名称、聊天内容、比赛事件</li>
+        <li><strong>仅支持空战，不支持陆战</strong></li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/lucasvmx/WarTelemetry" target="_blank">lucasvmx/WarTelemetry</a>
+        <span class="stars">⭐ 12</span><span class="lang">Go</span><span class="updated">更新 2024-05</span>
+      </div>
+      <div class="repo-desc">Go 语言遥测数据库</div>
+      <ul class="features">
+        <li>提供 War Thunder 遥测数据的 Go 库</li>
+        <li>封装 8111 端口各端点访问</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/Sgambe33/WarThunder-Vehicles-API" target="_blank">Sgambe33/WarThunder-Vehicles-API</a>
+        <span class="stars">⭐ 50</span><span class="lang">JavaScript</span><span class="updated">更新 2026-07</span>
+      </div>
+      <div class="repo-desc">载具数据 REST API（在线服务）</div>
+      <ul class="features">
+        <li>提供所有游戏内载具的详细数据（含隐藏/活动载具）</li>
+        <li>载具性能、经济成本、武器配置、预设方案</li>
+        <li>在线 API 地址：wtvehiclesapi.duckdns.org</li>
+        <li>72 小时内限 1 万次请求，建议本地缓存</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 4. 瞄准镜编辑 -->
+<div class="category c-orange">
+  <div class="cat-header"><span class="icon">🎯</span> 四、瞄准镜 / 界面编辑</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/ShubbeLeontij/sightgenerator" target="_blank">ShubbeLeontij/sightgenerator</a>
+        <span class="stars">⭐ 33</span><span class="lang">Python</span><span class="updated">更新 2026-05</span>
+      </div>
+      <div class="repo-desc">自定义瞄准镜图形界面生成器</div>
+      <ul class="features">
+        <li>GUI 界面创建自定义瞄准镜（sight）</li>
+        <li>大量可配置选项，带 tooltip 说明</li>
+        <li>支持直接编辑 defaults.py 进行深度自定义</li>
+        <li>提供 exe 直接运行版和 Python 源码版</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/SMILEY4/WTSightEdit" target="_blank">SMILEY4/WTSightEdit</a>
+        <span class="stars">⭐ 32</span><span class="lang">Java</span><span class="updated">更新 2024-10</span>
+      </div>
+      <div class="repo-desc">瞄准镜所见即所得 (WYSIWYG) 编辑器 <span class="tag">已停止开发</span></div>
+      <ul class="features">
+        <li>可视化编辑自定义瞄准镜</li>
+        <li>基于 Java 8 + JavaFX</li>
+        <li>需手动添加 JavaFX 模块运行</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 5. 资源管理 / Mod 安装 -->
+<div class="category c-red">
+  <div class="cat-header"><span class="icon">📦</span> 五、资源管理 / Mod 安装</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/AimerSo/AimerWT" target="_blank">AimerSo/AimerWT</a>
+        <span class="stars">⭐ 165</span><span class="lang">JavaScript</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">战争雷霆一站式资源管理工具 <span class="tag">中文</span></div>
+      <ul class="features">
+        <li>语音包一键导入/安装/卸载（支持按模块安装）</li>
+        <li>涂装 (camouflage) 可视化管理</li>
+        <li>任务 (mission)、机库场景 (hangar)、模型 (model) 管理</li>
+        <li>内置游戏字体自定义功能</li>
+        <li>自动检测/配置游戏路径，支持主题切换</li>
+        <li>支持 Windows / Linux / Steam Deck</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/chunbo-nj/echo-contact-vox-releases" target="_blank">chunbo-nj/echo-contact-vox-releases</a>
+        <span class="stars">⭐ 32</span><span class="lang">—</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">听觉增强语音包（VOX）<span class="tag">中文</span></div>
+      <ul class="features">
+        <li>降低友军和自身载具的发动机/履带/悬挂噪音</li>
+        <li>增强敌军发动机音量，优化距离衰减曲线（200m 内可辨识）</li>
+        <li>中文语音提示：播报发动机类别和距离</li>
+        <li>专为地面战斗设计</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/LordSyrupy/MaplesLocalization" target="_blank">LordSyrupy/MaplesLocalization</a>
+        <span class="stars">⭐ 17</span><span class="lang">—</span><span class="updated">更新 2026-07</span>
+      </div>
+      <div class="repo-desc">本地化 Mod — 载具/武器名称重命名</div>
+      <ul class="features">
+        <li>将载具和武器名称改为更一致、更贴近真实的命名</li>
+        <li>飞机和武器主要采用北约代号</li>
+        <li>修复语法和惯例问题，提升可读性</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/GaijinEntertainment/fmod_studio_warthunder_for_modders" target="_blank">GaijinEntertainment/fmod_studio_warthunder_for_modders</a>
+        <span class="stars">⭐ 231</span><span class="lang">JavaScript</span><span class="updated">更新 2026-06</span>
+        <span class="tag">官方</span>
+      </div>
+      <div class="repo-desc">官方 FMod Studio 项目 — 声音 Mod 开发</div>
+      <ul class="features">
+        <li>Gaijin 官方提供的 FMod Studio 工程文件</li>
+        <li>用于创建游戏声音修改</li>
+        <li>不含语音对话和音乐</li>
+        <li>资源以 vorbis/ogg 压缩存储（原 20GB+）</li>
+        <li>不能更改声音事件名称和混音总线结构</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 6. 回放分析 -->
+<div class="category c-teal">
+  <div class="cat-header"><span class="icon">🎬</span> 六、回放分析</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/Sgambe33/WT-Plotter" target="_blank">Sgambe33/WT-Plotter</a>
+        <span class="stars">⭐ 33</span><span class="lang">C++</span><span class="updated">更新 2026-04</span>
+      </div>
+      <div class="repo-desc">回放文件解析与绘图工具</div>
+      <ul class="features">
+        <li>解析战争雷霆回放文件（含旧版本）</li>
+        <li>回放元数据：地图、模式、难度、日期、胜负</li>
+        <li>排行榜分析：击杀/死亡/助攻/炸弹伤害/海战伤害/占领</li>
+        <li>玩家信息：平台、载具阵容、国家</li>
+        <li>本地数据库持久存储，支持英语/俄语</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/maxsupermanhd/wrpl-inspector" target="_blank">maxsupermanhd/wrpl-inspector</a>
+        <span class="stars">⭐ 12</span><span class="lang">Go</span><span class="updated">更新 2026-08</span>
+      </div>
+      <div class="repo-desc">回放格式探索库与 GUI</div>
+      <ul class="features">
+        <li>Go 库解析回放二进制格式 + dear-imgui GUI 界面</li>
+        <li>解析静态头、设置 BLK、结果 BLK、数据包流</li>
+        <li>支持同时打开多个回放文件</li>
+        <li>支持从 session ID 下载服务器回放</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 7. 测距 / 辅助 -->
+<div class="category c-yellow">
+  <div class="cat-header"><span class="icon">📏</span> 七、测距 / 地图辅助</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/Yonisen/WarThunder_Yellow_Mark_Rangefinder" target="_blank">Yonisen/WarThunder_Yellow_Mark_Rangefinder</a>
+        <span class="stars">⭐ 103</span><span class="lang">Python</span><span class="updated">更新 2024-07</span>
+      </div>
+      <div class="repo-desc">基于地图黄标记的测距仪（YOLOv5 神经网络）</div>
+      <ul class="features">
+        <li>截图后用 YOLOv5 神经网络识别地图上的黄色标记</li>
+        <li>计算并显示距离，使用覆盖层展示</li>
+        <li>纯 CPU 计算，老旧电脑也可运行</li>
+        <li>支持自定义地图比例尺（Ctrl+N）</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/Yonisen/WarThunder_Map_Marker_Finder" target="_blank">Yonisen/WarThunder_Map_Marker_Finder</a>
+        <span class="stars">⭐ 88</span><span class="lang">Python</span><span class="updated">更新 2024-09</span>
+      </div>
+      <div class="repo-desc">同上测距仪的俄文版本（功能相同）</div>
+      <ul class="features">
+        <li>YOLOv5 识别地图标记 + 距离测量</li>
+        <li>支持多种分辨率（不支持的分辨率可参考截图文件夹）</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 8. 性能计算 / 数据分析 -->
+<div class="category c-indigo">
+  <div class="cat-header"><span class="icon">📈</span> 八、性能计算 / 数据可视化</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/ControlNet/wt-data-project.web" target="_blank">ControlNet/wt-data-project.web</a>
+        <span class="stars">⭐ 48</span><span class="lang">TypeScript</span><span class="updated">更新 2026-07</span>
+      </div>
+      <div class="repo-desc">数据可视化 Web 应用</div>
+      <ul class="features">
+        <li>在线站点：wt.controlnet.space</li>
+        <li>热力图展示战斗数据，鼠标提示显示详情</li>
+        <li>点击查看数据趋势，查看原始数据</li>
+        <li>配合 wt-data-project.data（数据集）和 .visualization（R 可视化）使用</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/Alpakinator/wt-aircraft-performance-calculator" target="_blank">Alpakinator/wt-aircraft-performance-calculator</a>
+        <span class="stars">⭐ 10</span><span class="lang">Python</span><span class="updated">更新 2026-06</span>
+      </div>
+      <div class="repo-desc">飞机性能计算器（数据 + 脚本）</div>
+      <ul class="features">
+        <li>基于公开数据挖掘计算所有飞机的飞行性能并生成图表</li>
+        <li>在线站点：wtapc.org</li>
+        <li>活塞发动机飞机的引擎功率文件（-4km 至 20km 高度）</li>
+        <li>空重/燃油重/武器重量文件</li>
+        <li>精度：绝大多数飞机引擎功率误差 99%-101%</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 9. Discord 集成 -->
+<div class="category c-pink">
+  <div class="cat-header"><span class="icon">💬</span> 九、Discord 状态集成</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/ValerieOSD/WarThunderRPC" target="_blank">ValerieOSD/WarThunderRPC</a>
+        <span class="stars">⭐ 11</span><span class="lang">Python</span><span class="updated">更新 2024-08</span>
+      </div>
+      <div class="repo-desc">Discord Rich Presence 集成</div>
+      <ul class="features">
+        <li>在 Discord 状态栏显示 War Thunder 游戏状态</li>
+        <li>显示在机库/比赛中/试驾中</li>
+        <li>通过 8111 端口读取数据，不修改游戏文件，不会被封</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/ledxdeliveryflopp/WarThunderDiscordRPC" target="_blank">ledxdeliveryflopp/WarThunderDiscordRPC</a>
+        <span class="stars">⭐ 10</span><span class="lang">Python</span><span class="updated">更新 2026-07</span>
+      </div>
+      <div class="repo-desc">Discord 富状态集成（同类项目）</div>
+      <ul class="features">
+        <li>功能类似，将 War Thunder 状态同步到 Discord</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 10. 自动化 / 脚本 -->
+<div class="category c-cyan">
+  <div class="cat-header"><span class="icon">🤖</span> 十、自动化 / 脚本（⚠️ 注意 ToS 风险）</div>
+  <div class="cat-body">
+
+    <div class="warning">⚠️ 以下项目涉及游戏自动化，可能违反 War Thunder 服务条款 (ToS)，使用存在封号风险，仅供学习研究参考。</div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/Donnadonnam/WarThunder-AutoPilot" target="_blank">Donnadonnam/WarThunder-AutoPilot</a>
+        <span class="stars">⭐ 23</span><span class="lang">Python</span><span class="updated">更新 2023-07</span>
+      </div>
+      <div class="repo-desc">自动驾驶实验项目</div>
+      <ul class="features">
+        <li>使用桌面自动化库控制 War Thunder</li>
+        <li>自动起飞、瞄准射击空中目标、自动降落</li>
+        <li>计划扩展：检测目标并投弹、语音命令</li>
+        <li>作者声明为研究教育目的，非作弊</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/GlaringMarvel/Aokana-Flying-Circus" target="_blank">GlaringMarvel/Aokana-Flying-Circus</a>
+        <span class="stars">⭐ 28</span><span class="lang">Python</span><span class="updated">更新 2026-05</span>
+        <span class="tag">中文</span><span class="tag">已停更</span>
+      </div>
+      <div class="repo-desc">空战历史脚本 <span class="tag">已停止维护</span></div>
+      <ul class="features">
+        <li>基于 War Thunder 的空战历史模式脚本</li>
+        <li>Python 初学者个人练习项目</li>
+        <li>作者明确提示：近期查封严格，不建议使用</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/GrayTempest-400/warthunder-cv2" target="_blank">GrayTempest-400/warthunder-cv2</a>
+        <span class="stars">⭐ 87</span><span class="lang">Python</span><span class="updated">更新 2024-02</span>
+        <span class="tag">中文</span><span class="tag">未维护</span>
+      </div>
+      <div class="repo-desc">陆战脚本（基于 OpenCV） <span class="tag">未维护</span></div>
+      <ul class="features">
+        <li>使用 OpenCV (cv2) 进行坦克检测和辅助瞄准</li>
+        <li>需要自行训练模型才能使用（无训练集提供）</li>
+        <li>作者声明因学习繁忙未维护，需自行修改代码</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- 11. 其他 / 通用工具 -->
+<div class="category c-blue">
+  <div class="cat-header"><span class="icon">🛠️</span> 十一、其他 / 通用工具</div>
+  <div class="cat-body">
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/brihernandez/MouseFlight" target="_blank">brihernandez/MouseFlight</a>
+        <span class="stars">⭐ 699</span><span class="lang">C#</span><span class="updated">更新 2019-05</span>
+      </div>
+      <div class="repo-desc">War Thunder 风格鼠标飞行控制（Unity 示例）</div>
+      <ul class="features">
+        <li>在 Unity 中实现 War Thunder 风格的鼠标飞行操控</li>
+        <li>不是 WT 插件，而是供其他游戏/项目参考的控制方案</li>
+        <li>提供 Unity 资源包可直接导入</li>
+      </ul>
+    </div>
+
+    <div class="repo">
+      <div class="repo-head">
+        <a class="repo-name" href="https://github.com/axiangcoding/WT-Toolkit" target="_blank">axiangcoding/WT-Toolkit</a>
+        <span class="stars">⭐ 12</span><span class="lang">Vue</span><span class="updated">更新 2024-09</span>
+        <span class="tag">中文</span>
+      </div>
+      <div class="repo-desc">战雷工具箱</div>
+      <ul class="features">
+        <li>自定义涂装 (skin) 管理</li>
+        <li>自定义瞄准镜 (sight) 管理</li>
+        <li>wt_ext_cli 的 GUI 前端</li>
+        <li>开发中，部分功能可能不稳定</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<div class="note">
+  💡 <strong>使用建议：</strong>
+  <ul style="margin-top:6px;">
+    <li>想了解游戏数据变更 → <strong>War-Thunder-Datamine</strong>（最活跃）</li>
+    <li>想管理 Mod/语音包/涂装 → <strong>AimerWT</strong>（中文，功能最全）</li>
+    <li>想要飞行 HUD → <strong>WTRTI</strong>（最成熟）或 <strong>VoidMei</strong></li>
+    <li>想做自定义瞄准镜 → <strong>sightgenerator</strong>（活跃）</li>
+    <li>想做声音 Mod → <strong>官方 fmod_studio 项目</strong></li>
+    <li>想开发遥测工具 → <strong>localhost API 文档</strong> + <strong>PowerBroker2/WarThunder</strong></li>
+  </ul>
+</div>
+
+<footer>
+  数据通过 GitHub Search API 收集 · 按 Star 数和活跃度筛选 · 仅供学习研究参考<br>
+  War Thunder ® 是 Gaijin Entertainment 的注册商标
+</footer>
+
+</body>
+</html>

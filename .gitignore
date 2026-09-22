@@ -1,0 +1,20 @@
+# ---- 本项目无关 / unrelated ----
+# A股分析，另一个独立项目（148MB，勿上传）/ separate A-share project, do NOT upload
+daily_stock_analyzer/
+_workbuddy_local/
+
+# ---- WorkBuddy 项目数据（禁上传）/ WorkBuddy project data ----
+.workbuddy/
+
+# ---- 回收站 / 本地垃圾 / trash & junk ----
+_trash_*/
+*.log
+*.pyc
+__pycache__/
+wt8111_logs/
+
+# ---- 临时产物 / temp artifacts ----
+*.csv
+hud_capture*.png
+power_curve_*.csv
+*.tmp

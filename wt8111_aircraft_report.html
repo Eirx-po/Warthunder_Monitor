@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WT 8111 飞机数据实测报告</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--border:#e2e8f0;--text:#1a202c;--muted:#64748b;
+--red:#e53e3e;--green:#38a169;--blue:#3182ce;--orange:#dd6b20;--yellow:#d69e2e;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+background:var(--bg);color:var(--text);line-height:1.7;padding:20px;max-width:1050px;margin:0 auto;}
+h1{text-align:center;font-size:1.6em;margin-bottom:5px;}
+.subtitle{text-align:center;color:var(--muted);font-size:.88em;margin-bottom:25px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;
+padding:18px 22px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.card h2{font-size:1.15em;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--border);}
+.bad{color:var(--red);font-weight:700;}
+.ok{color:var(--green);font-weight:700;}
+.warn{color:var(--orange);font-weight:700;}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.92em;}
+th,td{border:1px solid var(--border);padding:7px 12px;text-align:left;}
+th{background:#edf2f7;font-weight:600;}
+tr:nth-child(even){background:#f8fafc;}
+code{background:#edf2f7;padding:2px 6px;border-radius:4px;font-size:.88em;font-family:Consolas,monospace;}
+pre{background:#1a202c;color:#e2e8f0;padding:14px;border-radius:8px;overflow-x:auto;font-size:.85em;margin:10px 0;}
+pre code{background:none;color:inherit;padding:0;}
+.verdict{padding:15px 20px;border-radius:8px;margin:15px 0;font-size:1.05em;}
+.verdict.bad-bg{background:#fff5f5;border-left:5px solid var(--red);}
+.verdict.ok-bg{background:#f0fff4;border-left:5px solid var(--green);}
+.verdict.warn-bg{background:#fffaf0;border-left:5px solid var(--orange);}
+.color-chip{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:4px;border:1px solid rgba(0,0,0,.2);}
+ul{padding-left:22px;margin:8px 0;}
+li{padding:3px 0;}
+.footer{text-align:center;color:var(--muted);font-size:.82em;margin-top:20px;border-top:1px solid var(--border);padding-top:12px;}
+.highlight{background:#fef3c7;padding:2px 6px;border-radius:4px;font-weight:600;}
+</style>
+</head>
+<body>
+
+<h1>✈️ 8111 端口飞机数据实测报告（第二轮）</h1>
+<p class="subtitle">127 次快照 · 含友军轰炸机 + 敌军战斗机轨迹 · 2026-08-26 01:07</p>
+
+<div class="card">
+<h2>🔬 本次实测概况</h2>
+<table>
+<tr><th>项目</th><th>值</th></tr>
+<tr><td>快照数</td><td>127 次</td></tr>
+<tr><td>监控时长</td><td>约 130 秒</td></tr>
+<tr><td>飞机轨迹点</td><td><strong>66 帧</strong>（含友军轰炸机 58 帧 + 敌军战斗机 27 帧，部分帧重叠）</td></tr>
+<tr><td>飞机类型</td><td>Bomber（轰炸机）、Fighter（战斗机）</td></tr>
+<tr><td>出现阵营</td><td>友军蓝色轰炸机、敌军红色战斗机</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>🎯 重大发现：飞机数据结构</h2>
+<p>飞机使用 <code>type: "aircraft"</code>，与坦克的 <code>type: "ground_model"</code> 不同。</p>
+
+<pre><code>{
+  "type": "aircraft",
+  "color": "#fa0C00",          // 敌军红色
+  "color[]": [250, 12, 0],
+  "blink": 0,
+  "icon": "Fighter",           // 或 "Bomber"
+  "icon_bg": "FighterTarget",  // 战斗机有此字段
+  "x": 0.612049,               // 归一化 X (0~1)
+  "y": 0.508955,               // 归一化 Y (0~1)
+  "dx": 0.999254,              // <span class="highlight">航向向量 X（归一化，模=1）</span>
+  "dy": -0.038620              // <span class="highlight">航向向量 Y（归一化，模=1）</span>
+}</code></pre>
+
+<div class="verdict ok-bg">
+<strong class="ok">✅ 好消息：</strong>
+<ul>
+<li>飞机有 <code>dx/dy</code> <strong>航向向量</strong>，模严格等于 1.0，可以直接得到飞行方向</li>
+<li>飞机位置 <code>x/y</code> 实时更新，可以连续追踪</li>
+<li>能区分友军（蓝色）和敌军（红色）</li>
+<li>能区分轰炸机和战斗机（icon 字段）</li>
+</ul>
+</div>
+
+<div class="verdict bad-bg">
+<strong class="bad">❌ 坏消息：</strong>
+<ul>
+<li><strong>仍然没有高度字段</strong> — 与坦克一样只有 2D 坐标</li>
+<li>所有字段：仅 <code>['blink', 'color', 'color[]', 'dx', 'dy', 'icon', 'icon_bg', 'type', 'x', 'y']</code></li>
+<li>没有速度字段 — 需要帧间差分估算</li>
+<li>没有高度 → 无法计算 3D 距离和弹道下坠</li>
+</ul>
+</div>
+</div>
+
+<div class="card">
+<h2>📐 dx/dy 航向向量验证</h2>
+<p>实测确认 <code>dx/dy</code> 是<strong>归一化方向向量</strong>（模 = 1.0），可直接换算为航向角：</p>
+<table>
+<tr><th>快照</th><th>dx</th><th>dy</th><th>模</th><th>航向角</th><th>说明</th></tr>
+<tr><td>#0</td><td>0.9968</td><td>0.0801</td><td>1.0000</td><td>4.6°</td><td>友军轰炸机，向东飞</td></tr>
+<tr><td>#5</td><td>0.9993</td><td>-0.0369</td><td>1.0000</td><td>-2.1°</td><td>微调航向</td></tr>
+<tr><td>#100</td><td>-0.4457</td><td>0.8952</td><td>1.0000</td><td>116.5°</td><td>敌军战斗机，向东北飞</td></tr>
+<tr><td>#108</td><td>0.871</td><td>0.491</td><td>1.0000</td><td>29.4°</td><td>敌机转向东飞行</td></tr>
+<tr><td>#112</td><td>0.999</td><td>-0.033</td><td>1.0000</td><td>-1.9°</td><td>敌机已改为正东</td></tr>
+</table>
+<p><strong>公式</strong>：<code>航向角 = atan2(dy, dx) × 180/π</code></p>
+<p class="ok">这个向量比帧间差分更准确——它直接来自游戏引擎，无需估算！</p>
+</div>
+
+<div class="card">
+<h2>📊 速度估算结果</h2>
+<p>用帧间位移差分计算（采样间隔约 1 秒，map_max = 4096m）：</p>
+<table>
+<tr><th>帧</th><th>位移(归一化)</th><th>位移(米)</th><th>估算速度</th></tr>
+<tr><td>0→1</td><td>0.0300</td><td>122.9m</td><td>≈442 km/h</td></tr>
+<tr><td>1→2</td><td>0.0317</td><td>130.0m</td><td>≈468 km/h</td></tr>
+<tr><td>2→3</td><td>0.0288</td><td>118.0m</td><td>≈425 km/h</td></tr>
+<tr><td>3→4</td><td>0.0290</td><td>118.8m</td><td>≈428 km/h</td></tr>
+<tr><td>4→5</td><td>0.0282</td><td>115.6m</td><td>≈416 km/h</td></tr>
+</table>
+<p>友军轰炸机水平速度约 <strong>420-470 km/h</strong>，符合二战轰炸机巡航速度。</p>
+<p class="warn">⚠️ 但这是<strong>水平速度</strong>。飞机实际速度是 3D 的（含垂直分量），水平速度 < 实际速度。没有高度数据，无法还原真实空速。</p>
+</div>
+
+<div class="card">
+<h2>🎯 敌机 vs 玩家距离追踪</h2>
+<p>敌军战斗机从远处接近玩家的过程（水平距离）：</p>
+<table>
+<tr><th>快照</th><th>敌机位置</th><th>玩家位置</th><th>水平距离</th><th>敌机航向</th></tr>
+<tr><td>#100</td><td>(-0.167, 0.260)</td><td>(0.648, 0.554)</td><td>≈3551m</td><td>116°↗</td></tr>
+<tr><td>#105</td><td>(-0.160, 0.393)</td><td>(0.649, 0.554)</td><td>≈3377m</td><td>106°↗</td></tr>
+<tr><td>#108</td><td>(-0.106, 0.466)</td><td>(0.648, 0.554)</td><td>≈3111m</td><td>29°↘</td></tr>
+<tr><td>#110</td><td>(-0.040, 0.493)</td><td>(0.649, 0.554)</td><td>≈2832m</td><td>17°→</td></tr>
+<tr><td>#112</td><td>(0.037, 0.500)</td><td>(0.650, 0.554)</td><td>≈2519m</td><td>-2°→</td></tr>
+<tr><td>#114</td><td>(0.115, 0.495)</td><td>(0.650, 0.554)</td><td>≈2201m</td><td>-3°→</td></tr>
+</table>
+<p>敌机从 3.5km 外逐渐接近到 2.2km，航向从东北转向正东——典型的俯冲攻击航线。</p>
+</div>
+
+<div class="card">
+<h2>🧮 对空提前量计算：可行性重新评估</h2>
+
+<div class="verdict warn-bg">
+<strong class="warn">更新结论：比之前预想的稍好，但仍然不够用。</strong>
+</div>
+
+<h3>✅ 能做到的</h3>
+<table>
+<tr><th>数据</th><th>来源</th><th>质量</th></tr>
+<tr><td>敌机水平位置</td><td>map_obj x/y</td><td class="ok">✅ 实时，精度约 4m（0.001 归一化）</td></tr>
+<tr><td>敌机航向</td><td>map_obj dx/dy</td><td class="ok">✅ 精确，归一化向量，模=1</td></tr>
+<tr><td>敌机水平速度</td><td>帧间差分</td><td class="warn">⚠️ 约 ±10% 误差（1Hz 采样）</td></tr>
+<tr><td>己方位置</td><td>Player x/y</td><td class="warn">⚠️ 归一化坐标，精度约 4m</td></tr>
+<tr><td>己方航向</td><td>Player dx/dy</td><td class="ok">✅ 有方向向量</td></tr>
+<tr><td>水平距离</td><td>两点距离 × map_max</td><td class="ok">✅ 可计算</td></tr>
+</table>
+
+<h3>❌ 做不到的</h3>
+<table>
+<tr><th>数据</th><th>影响</th><th>严重程度</th></tr>
+<tr><td><strong>敌机高度</strong></td><td>无法计算 3D 斜距、弹道下坠、炮弹飞行时间</td><td class="bad">❌ 致命</td></tr>
+<tr><td>敌机垂直速度</td><td>俯冲/爬升时提前量方向错误</td><td class="bad">❌ 严重</td></tr>
+<tr><td>炮弹初速/弹道</td><td>需从 Datamine 拆包获取</td><td class="warn">⚠️ 可解决但麻烦</td></tr>
+<tr><td>高采样率</td><td>1Hz 下飞机移动 120m/帧，机动检测滞后</td><td class="warn">⚠️ 严重</td></tr>
+</table>
+
+<h3>理论上的"勉强方案"</h3>
+<p>如果接受以下假设，可以做出一个<strong>非常粗糙的</strong>水平提前量指示器：</p>
+<ol>
+<li>假设敌机高度 = 固定值（如 500m，典型 CAS 高度）</li>
+<li>用 dx/dy 作为航向，帧间差分作为速度</li>
+<li>水平距离从 x/y 计算</li>
+<li>3D 距离 ≈ √(水平距离² + 假设高度²)</li>
+<li>炮弹飞行时间 = 3D 距离 / 初速（从 Datamine 查）</li>
+<li>提前点 = 当前位置 + 速度向量 × 飞行时间</li>
+</ol>
+<p class="warn">但这只是<strong>水平面上的预测</strong>，不含仰角信息。你需要自己根据假设高度算出仰角，然后在屏幕上叠加。当敌机实际高度与假设不符时（俯冲/爬升），预测完全失效。</p>
+</div>
+
+<div class="card">
+<h2>💡 最终建议</h2>
+
+<div class="verdict warn-bg">
+<strong>8111 数据可以用来做一个"半成品"对空辅助工具，但精度不足以用于实战瞄准。</strong>
+</div>
+
+<h3>有价值的用法</h3>
+<ul>
+<li><strong class="ok">敌机来袭警报</strong> — 检测红色 aircraft 接近，播报"敌机方位XX度，距离XX米"</li>
+<li><strong class="ok">小地图雷达</strong> — HUD 上显示所有飞机位置、航向、类型</li>
+<li><strong class="ok">威胁优先级排序</strong> — 按距离和航向是否朝己方排序</li>
+<li><strong class="ok">水平提前量参考线</strong> — 在小地图上画出"如果敌机保持航速，N秒后在哪"</li>
+</ul>
+
+<h3>做不到的</h3>
+<ul>
+<li><strong class="bad">精确瞄准点</strong> — 缺高度，无法算仰角和弹道下坠</li>
+<li><strong class="bad">屏幕叠加瞄准</strong> — 没有屏幕坐标映射，需额外截图标定</li>
+</ul>
+
+<h3>如果要更进一步</h3>
+<p>混合方案：<strong>8111 提供水平预测 + 截图估算仰角</strong></p>
+<ul>
+<li>8111 算出敌机水平位置和速度 → 预测水平提前点</li>
+<li>截图识别敌机在屏幕中的垂直位置 → 估算仰角</li>
+<li>两者结合 → 得出 3D 瞄准点</li>
+</ul>
+<p>复杂度高，但这是唯一能突破"无高度"限制的路线。</p>
+</div>
+
+<div class="footer">
+第二轮实测 · 127 快照 · 66 帧飞机数据 · J:\Quant\wt8111_logs\snapshots\<br>
+监控脚本：J:\Quant\wt8111_monitor.py
+</div>
+
+</body>
+</html>

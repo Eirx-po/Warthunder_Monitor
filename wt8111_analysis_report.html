@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WT 8111 端口实测分析报告</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--border:#e2e8f0;--text:#1a202c;--muted:#64748b;
+--red:#e53e3e;--green:#38a169;--blue:#3182ce;--orange:#dd6b20;--yellow:#d69e2e;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+background:var(--bg);color:var(--text);line-height:1.7;padding:20px;max-width:1000px;margin:0 auto;}
+h1{text-align:center;font-size:1.6em;margin-bottom:5px;}
+.subtitle{text-align:center;color:var(--muted);font-size:.88em;margin-bottom:25px;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;
+padding:18px 22px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.card h2{font-size:1.15em;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--border);}
+.bad{color:var(--red);font-weight:700;}
+.ok{color:var(--green);font-weight:700;}
+.warn{color:var(--orange);font-weight:700;}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.92em;}
+th,td{border:1px solid var(--border);padding:7px 12px;text-align:left;}
+th{background:#edf2f7;font-weight:600;}
+tr:nth-child(even){background:#f8fafc;}
+code{background:#edf2f7;padding:2px 6px;border-radius:4px;font-size:.88em;font-family:Consolas,monospace;}
+pre{background:#1a202c;color:#e2e8f0;padding:14px;border-radius:8px;overflow-x:auto;font-size:.85em;margin:10px 0;}
+pre code{background:none;color:inherit;padding:0;}
+.verdict{padding:15px 20px;border-radius:8px;margin:15px 0;font-size:1.05em;}
+.verdict.bad-bg{background:#fff5f5;border-left:5px solid var(--red);}
+.verdict.ok-bg{background:#f0fff4;border-left:5px solid var(--green);}
+.verdict.warn-bg{background:#fffaf0;border-left:5px solid var(--orange);}
+.color-chip{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:4px;border:1px solid rgba(0,0,0,.2);}
+ul{padding-left:22px;margin:8px 0;}
+li{padding:3px 0;}
+.footer{text-align:center;color:var(--muted);font-size:.82em;margin-top:20px;border-top:1px solid var(--border);padding-top:12px;}
+</style>
+</head>
+<body>
+
+<h1>📡 War Thunder 8111 端口实测分析报告</h1>
+<p class="subtitle">街机陆战 · 81 次快照 · 日本 M36B2 · 2026-08-26 01:00</p>
+
+<div class="card">
+<h2>🔬 实测环境</h2>
+<table>
+<tr><th>项目</th><th>值</th></tr>
+<tr><td>游戏模式</td><td>街机陆战（Arcade Ground）</td></tr>
+<tr><td>驾驶载具</td><td><code>tankModels/jp_m36b2_jgsdf</code>（日本 M36B2）</td></tr>
+<tr><td>地图</td><td>grid_size [1650, 1600], map_max [4096, 4096]</td></tr>
+<tr><td>监控时长</td><td>约 90 秒，81 次快照</td></tr>
+<tr><td>轮询频率</td><td>约 1 Hz（非战斗状态）/ 3 Hz（战斗状态）</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>📊 各端点状态</h2>
+<table>
+<tr><th>端点</th><th>状态</th><th>说明</th></tr>
+<tr><td><code>/state</code></td><td class="bad">❌ valid=false</td><td>陆战中始终不可用！无法获取己方精确位置/航向/速度</td></tr>
+<tr><td><code>/indicators</code></td><td class="ok">✅ 可用</td><td>载具仪表：速度、RPM、档位、乘员、稳定器等</td></tr>
+<tr><td><code>/map_obj.json</code></td><td class="ok">✅ 可用</td><td>返回 133-149 个对象列表（含静态+动态）</td></tr>
+<tr><td><code>/map_info.json</code></td><td class="ok">✅ 可用</td><td>地图坐标系参数（grid_size, map_max 等）</td></tr>
+<tr><td><code>/mission.json</code></td><td class="ok">✅ 可用</td><td>任务目标和状态</td></tr>
+<tr><td><code>/hudmsg</code></td><td class="bad">❌ 400 Bad Request</td><td>需要参数，不能直接访问</td></tr>
+<tr><td><code>/gamechat</code></td><td class="bad">❌ 400 Bad Request</td><td>需要参数，不能直接访问</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>🗺️ map_obj.json 数据结构</h2>
+<p><strong>返回格式</strong>：JSON 数组，每个元素是一个地图对象</p>
+<pre><code>{
+  "type": "ground_model",       // 对象类型
+  "color": "#174DFF",           // 阵营颜色十六进制
+  "color[]": [23, 77, 255],     // RGB 数组
+  "blink": 0,                   // 是否闪烁
+  "icon": "MediumTank",         // 图标类型
+  "icon_bg": "none",            // 背景
+  "x": 0.586873,                // 归一化 X 坐标 (0~1)
+  "y": 0.642267,                // 归一化 Y 坐标 (0~1)
+  "dx": -0.978299,              // 方向向量 X（仅 Player 有）
+  "dy": -0.207199               // 方向向量 Y（仅 Player 有）
+}</code></pre>
+
+<h3 style="margin-top:15px;">坐标系统</h3>
+<table>
+<tr><th>参数</th><th>值</th><th>含义</th></tr>
+<tr><td>map_max</td><td>[4096, 4096]</td><td>地图最大范围（米）</td></tr>
+<tr><td>map_min</td><td>[0, 0]</td><td>地图最小范围</td></tr>
+<tr><td>grid_size</td><td>[1650, 1600]</td><td>网格大小</td></tr>
+<tr><td>grid_steps</td><td>[225, 225]</td><td>网格步长</td></tr>
+</table>
+<p><strong>坐标换算公式</strong>：<code>实际距离(米) = 归一化坐标差 × map_max</code></p>
+<p><strong>示例</strong>：归一化差 0.01 → 实际约 <strong>41 米</strong></p>
+</div>
+
+<div class="card">
+<h2>🎯 对象类型统计</h2>
+<table>
+<tr><th>type</th><th>icon</th><th>数量</th><th>说明</th></tr>
+<tr><td>ground_model</td><td>MediumTank</td><td>6</td><td>中型坦克</td></tr>
+<tr><td>ground_model</td><td>HeavyTank</td><td>6</td><td>重型坦克</td></tr>
+<tr><td>ground_model</td><td>TankDestroyer</td><td>2</td><td>坦克歼击车</td></tr>
+<tr><td>ground_model</td><td>LightTank</td><td>1</td><td>轻型坦克</td></tr>
+<tr><td>ground_model</td><td>Player</td><td>1</td><td>玩家自己（黄色，有 dx/dy）</td></tr>
+<tr><td>capture_zone</td><td>capture_zone</td><td>3</td><td>占领区 A/B/C</td></tr>
+<tr><td>respawn_base_tank</td><td>respawn_base_tank</td><td>128</td><td>坦克出生点</td></tr>
+<tr><td>respawn_base_fighter</td><td>respawn_base_fighter</td><td>2</td><td>战斗机出生点</td></tr>
+</table>
+<p class="warn">⚠️ 81 次快照中 <strong>未出现任何飞机类型</strong>（air_model）。可能本局无人出飞机，或飞机在街机陆战中使用不同的 type 值。</p>
+</div>
+
+<div class="card">
+<h2>🎨 阵营颜色对照</h2>
+<table>
+<tr><th>颜色</th><th>色值</th><th>阵营</th></tr>
+<tr><td><span class="color-chip" style="background:#faC81E;"></span>黄色</td><td>#faC81E</td><td>玩家自己</td></tr>
+<tr><td><span class="color-chip" style="background:#174DFF;"></span>蓝色</td><td>#174DFF</td><td>友军</td></tr>
+<tr><td><span class="color-chip" style="background:#67D756;"></span>绿色</td><td>#67D756</td><td>盟友</td></tr>
+<tr><td><span class="color-chip" style="background:#fa0C00;"></span>红色</td><td>#fa0C00</td><td>敌军</td></tr>
+</table>
+</div>
+
+<div class="card">
+<h2>❓ 关键问题：有没有高度数据？</h2>
+<div class="verdict bad-bg">
+<strong class="bad">结论：没有。</strong> 所有 ground_model 对象只有 <code>x, y</code> 两个坐标，<strong>没有任何高度字段</strong>（z / alt / altitude / height 均不存在）。
+</div>
+<p>ground_model 的完整字段列表：</p>
+<pre><code>['blink', 'color', 'color[]', 'dx', 'dy', 'icon', 'icon_bg', 'type', 'x', 'y']</code></pre>
+<p>即使飞机出现（type 变为 <code>air_model</code>），根据 8111 端口的设计逻辑，大概率仍然只有 2D 坐标。这是因为 8111 的 map_obj 本质上是<strong>小地图数据</strong>，而小地图本身是俯视图，不包含高度维度。</p>
+</div>
+
+<div class="card">
+<h2>❓ 关键问题：/state 在陆战能用吗？</h2>
+<div class="verdict bad-bg">
+<strong class="bad">结论：不能。</strong> 整个监控期间 <code>/state</code> 始终返回 <code>{"valid": false}</code>，即使在驾驶坦克移动中也是如此。
+</div>
+<p>这与 PowerBroker2/WarThunder 文档一致——该库明确标注 <strong>"NOT tanks"</strong>。<code>/state</code> 端点只在<strong>空战</strong>中有效，提供己方载具的经纬度、航向、空速、俯仰/滚转等。陆战中无法获取己方精确位置。</p>
+</div>
+
+<div class="card">
+<h2>📐 对空提前量计算可行性评估</h2>
+
+<div class="verdict bad-bg">
+<strong>最终结论：用 8111 端口在陆战街机做对空提前量计算 —— 不可行。</strong>
+</div>
+
+<table>
+<tr><th>所需数据</th><th>8111 可用性</th><th>问题</th></tr>
+<tr><td>敌机水平位置</td><td class="warn">⚠️ 可能有</td><td>需飞机出现在小地图上；坐标为归一化 2D</td></tr>
+<tr><td>敌机高度</td><td class="bad">❌ 无</td><td><strong>致命缺陷</strong>：无法计算 3D 距离和弹道下坠</td></tr>
+<tr><td>敌机速度</td><td class="warn">⚠️ 可估算</td><td>用连续快照差分计算，但精度受采样率限制</td></tr>
+<tr><td>敌机航向</td><td class="warn">⚠️ 可能有</td><td>若有 dx/dy 字段可获取方向，但未在非 Player 对象上验证</td></tr>
+<tr><td>己方位置</td><td class="bad">❌ 无</td><td>/state 在陆战不可用；只能用 Player 对象的 x/y 代替</td></tr>
+<tr><td>己方航向</td><td class="warn">⚠️ 有 dx/dy</td><td>Player 对象有方向向量，但精度未知</td></tr>
+<tr><td>炮弹初速</td><td class="bad">❌ 无</td><td>需从 Datamine 拆包获取</td></tr>
+<tr><td>距离</td><td class="warn">⚠️ 可算</td><td>水平距离可算，但 3D 斜距缺高度无法计算</td></tr>
+</table>
+
+<h3 style="margin-top:15px;">三个致命问题</h3>
+<ol>
+<li><strong class="bad">没有高度</strong> → 无法算 3D 距离 → 无法算炮弹飞行时间 → 无法算弹道下坠 → 提前量公式缺失核心输入</li>
+<li><strong class="bad">/state 不可用</strong> → 己方位置只能从小地图归一化坐标估算，精度约 ±41m（0.01 归一化单位），对近距离对空射击而言误差太大</li>
+<li><strong class="warn">更新频率约 1-3 Hz</strong> → 飞机 500 km/h 时两次采样间移动 46-139m，速度估算误差极大</li>
+</ol>
+</div>
+
+<div class="card">
+<h2>💡 还能用 8111 做什么？</h2>
+<p>虽然对空提前量不可行，但 8111 在陆战中仍有用途：</p>
+<ul>
+<li><strong class="ok">小地图雷达</strong> — 实时显示敌友位置，类似 WTRTI 的 HUD 功能</li>
+<li><strong class="ok">敌方位置警报</strong> — 检测红色单位接近，声音/视觉提醒</li>
+<li><strong class="ok">占领区监控</strong> — 实时显示 A/B/C 点状态和占领进度</li>
+<li><strong class="ok">速度/仪表 HUD</strong> — /indicators 可用，显示速度、RPM、乘员状态等</li>
+<li><strong class="ok">战斗录像分析</strong> — 持续记录 map_obj 时序数据用于战后复盘</li>
+<li><strong class="ok">Discord 状态</strong> — 显示在战斗中、驾驶什么载具</li>
+</ul>
+</div>
+
+<div class="card">
+<h2>🔄 如果一定要做对空提前量？</h2>
+<p>唯一可行路线：<strong>截图 + 计算机视觉</strong>（不依赖 8111）</p>
+<ul>
+<li>用 OpenCV/YOLO 从游戏画面识别飞机轮廓和位置</li>
+<li>从像素位置 + 仰角估算 3D 位置（需要相机标定参数）</li>
+<li>用连续帧差分计算角速度</li>
+<li>结合炮弹初速（从 Datamine 获取）计算提前角</li>
+<li>在屏幕上叠加预测瞄准点</li>
+</ul>
+<p class="warn">⚠️ 但这条路线复杂度高，需要训练模型、实时截图处理、屏幕标定，且可能违反游戏 ToS。</p>
+</div>
+
+<div class="footer">
+数据来源：localhost:8111 实测 · 81 次快照 · J:\Quant\wt8111_monitor.py<br>
+快照保存于 J:\Quant\wt8111_logs\snapshots\
+</div>
+
+</body>
+</html>

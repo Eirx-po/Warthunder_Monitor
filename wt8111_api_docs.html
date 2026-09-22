@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>War Thunder 8111 端口 API 完整文档</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--border:#e2e8f0;--text:#1a202c;--muted:#64748b;
+--red:#e53e3e;--green:#38a169;--blue:#3182ce;--orange:#dd6b20;--yellow:#d69e2e;--purple:#805ad5;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+background:var(--bg);color:var(--text);line-height:1.7;padding:20px;max-width:1100px;margin:0 auto;}
+h1{text-align:center;font-size:1.7em;margin-bottom:5px;}
+.subtitle{text-align:center;color:var(--muted);font-size:.88em;margin-bottom:25px;}
+nav{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 20px;margin-bottom:20px;}
+nav a{display:inline-block;margin:3px 10px 3px 0;text-decoration:none;color:var(--blue);font-size:.9em;}
+nav a:hover{text-decoration:underline;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;
+padding:18px 22px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.06);}
+.card h2{font-size:1.2em;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--border);}
+.card h3{font-size:1.05em;margin:15px 0 8px;color:var(--purple);}
+.endpoint{display:inline-block;background:var(--blue);color:#fff;padding:3px 12px;border-radius:6px;
+font-family:Consolas,monospace;font-size:.9em;margin:5px 0;}
+.endpoint.get{background:var(--green);}
+.endpoint.url{background:#1a202c;}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.92em;}
+th,td{border:1px solid var(--border);padding:7px 12px;text-align:left;}
+th{background:#edf2f7;font-weight:600;}
+tr:nth-child(even){background:#f8fafc;}
+code{background:#edf2f7;padding:2px 6px;border-radius:4px;font-size:.88em;font-family:Consolas,monospace;}
+pre{background:#1a202c;color:#e2e8f0;padding:14px;border-radius:8px;overflow-x:auto;font-size:.85em;margin:10px 0;}
+pre code{background:none;color:inherit;padding:0;}
+.note{background:#ebf8ff;border-left:4px solid var(--blue);padding:10px 14px;border-radius:4px;margin:10px 0;font-size:.9em;}
+.warn{background:#fffaf0;border-left:4px solid var(--orange);padding:10px 14px;border-radius:4px;margin:10px 0;font-size:.9em;}
+.tip{background:#f0fff4;border-left:4px solid var(--green);padding:10px 14px;border-radius:4px;margin:10px 0;font-size:.9em;}
+.bad{color:var(--red);font-weight:700;}
+.ok{color:var(--green);font-weight:700;}
+.warn-text{color:var(--orange);font-weight:700;}
+ul{padding-left:22px;margin:8px 0;}
+li{padding:2px 0;}
+.footer{text-align:center;color:var(--muted);font-size:.82em;margin-top:20px;border-top:1px solid var(--border);padding-top:12px;}
+.formula{background:#fffff0;border:1px dashed var(--yellow);padding:10px 14px;border-radius:6px;margin:8px 0;font-family:Consolas,monospace;font-size:.9em;}
+</style>
+</head>
+<body>
+
+<h1>📡 War Thunder localhost:8111 API 完整文档</h1>
+<p class="subtitle">来源：lucasvmx/WarThunder-localhost-documentation · 翻译整理 + 实测补充</p>
+
+<nav>
+<strong>目录：</strong>
+<a href="#overview">总览</a>
+<a href="#state">/state</a>
+<a href="#indicators">/indicators</a>
+<a href="#mapobj">/map_obj.json</a>
+<a href="#mapinfo">/map_info.json</a>
+<a href="#mission">/mission.json</a>
+<a href="#hudmsg">/hudmsg</a>
+<a href="#gamechat">/gamechat</a>
+<a href="#summary">实测对比</a>
+</nav>
+
+<div class="card" id="overview">
+<h2>📋 端点总览</h2>
+<table>
+<tr><th>端点</th><th>方法</th><th>用途</th><th>需要参数</th></tr>
+<tr><td><code>/state</code></td><td>GET</td><td>己方载具完整飞行状态</td><td>无</td></tr>
+<tr><td><code>/indicators</code></td><td>GET</td><td>己方载具仪表数据</td><td>无</td></tr>
+<tr><td><code>/map_obj.json</code></td><td>GET</td><td>地图上所有对象（敌友单位、占领区等）</td><td>无</td></tr>
+<tr><td><code>/map_info.json</code></td><td>GET</td><td>地图坐标系参数</td><td>无</td></tr>
+<tr><td><code>/mission.json</code></td><td>GET</td><td>当前任务目标和状态</td><td>无</td></tr>
+<tr><td><code>/hudmsg</code></td><td>GET</td><td>HUD 消息（击杀/伤害事件）</td><td><code>lastEvt</code>, <code>lastDmg</code></td></tr>
+<tr><td><code>/gamechat</code></td><td>GET</td><td>游戏聊天消息</td><td><code>lastId</code></td></tr>
+<tr><td><code>/map.img</code></td><td>GET</td><td>当前地图图片</td><td>无</td></tr>
+</table>
+<div class="note">💡 所有端点都是 <code>http://localhost:8111</code> 前缀，游戏运行时自动开启，无需认证。</div>
+</div>
+
+<!-- ============ STATE ============ -->
+<div class="card" id="state">
+<h2>1. /state — 己方载具飞行状态</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/state</div>
+
+<div class="warn">⚠️ <strong>实测发现：此端点仅在空战有效，陆战始终返回 <code>{"valid": false}</code></strong></div>
+
+<h3>响应示例</h3>
+<pre><code>{
+  "valid": true,
+  "aileron, %": -0,           // 副翼位置百分比
+  "elevator, %": -20,         // 升降舵位置百分比
+  "rudder, %": -0,            // 方向舵位置百分比
+  "flaps, %": 0,              // 襟翼位置百分比
+  "H, m": 4936,               // 当前高度（米）
+  "TAS, km/h": 237,           // 真空速（km/h）
+  "IAS, km/h": 185,           // 指示空速（km/h）
+  "M": 0.20,                  // 马赫数
+  "AoA, deg": 1.1,            // 攻角（度）
+  "AoS, deg": -0.1,           // 侧滑角（度）
+  "Ny": 1.00,                 // 过载（G力）
+  "Vy, m/s": 3.2,             // 垂直速度（m/s）
+  "Wx, deg/s": -0,            // 滚转角速度（度/秒）
+  "Mfuel, kg": 750,           // 当前燃油量（kg）
+  "Mfuel0, kg": 2620,         // 初始燃油量（kg）
+  "throttle 1, %": 100,       // 1号发动机油门
+  "mixture 1, %": 100,        // 1号发动机混合比
+  "magneto 1": 3,             // 1号发动机磁电机
+  "power 1, hp": 484.0,       // 1号发动机功率（马力）
+  "RPM 1": 1957,              // 1号发动机转速
+  "manifold pressure 1, atm": 0.81, // 进气歧管压力
+  "oil temp 1, C": 73,        // 机油温度
+  "pitch 1, deg": 28.2,       // 螺旋桨桨距角
+  "thrust 1, kgs": 473,       // 推力（kg）
+  "efficiency 1, %": 85       // 效率
+  // ... 多发飞机有 throttle 2, RPM 2 等
+}</code></pre>
+
+<h3>关键字段说明</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>valid</code></td><td>bool</td><td>是否有效（陆战=false）</td></tr>
+<tr><td><code>H, m</code></td><td>int</td><td><strong>当前高度（米）</strong> — 空战特有</td></tr>
+<tr><td><code>TAS, km/h</code></td><td>int</td><td>真空速</td></tr>
+<tr><td><code>IAS, km/h</code></td><td>int</td><td>指示空速</td></tr>
+<tr><td><code>M</code></td><td>float</td><td>马赫数</td></tr>
+<tr><td><code>AoA, deg</code></td><td>float</td><td>攻角</td></tr>
+<tr><td><code>AoS, deg</code></td><td>float</td><td>侧滑角</td></tr>
+<tr><td><code>Ny</code></td><td>float</td><td>过载 G力</td></tr>
+<tr><td><code>Vy, m/s</code></td><td>float</td><td><strong>垂直速度</strong> — 爬升/俯冲</td></tr>
+<tr><td><code>Wx, deg/s</code></td><td>float</td><td>滚转角速度</td></tr>
+<tr><td><code>Mfuel, kg</code></td><td>int</td><td>当前燃油</td></tr>
+<tr><td><code>throttle N, %</code></td><td>int</td><td>N号发动机油门</td></tr>
+<tr><td><code>power N, hp</code></td><td>float</td><td>N号发动机功率</td></tr>
+<tr><td><code>RPM N</code></td><td>int</td><td>N号发动机转速</td></tr>
+<tr><td><code>oil temp N, C</code></td><td>int</td><td>机油温度</td></tr>
+<tr><td><code>thrust N, kgs</code></td><td>int</td><td>推力</td></tr>
+</table>
+<div class="tip">✅ <strong>这是唯一提供高度（H, m）和垂直速度（Vy）的端点</strong>，但仅空战可用。</div>
+</div>
+
+<!-- ============ INDICATORS ============ -->
+<div class="card" id="indicators">
+<h2>2. /indicators — 己方载具仪表数据</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/indicators</div>
+
+<div class="note">💡 实测：空战和陆战均可用，但字段会因载具类型不同而变化。</div>
+
+<h3>空战响应示例（飞机）</h3>
+<pre><code>{
+  "valid": true,
+  "type": "so_4050_vautour_2a_iaf",   // 载具型号
+  "speed": 0.0,                       // 速度
+  "aviahorizon_roll": -0.084,         // 人工地平仪滚转
+  "aviahorizon_pitch": -4.279,        // 人工地平仪俯仰
+  "compass": 355.831,                 // 罗盘航向
+  "altitude_hour": 63.056,            // 高度计（时针）
+  "altitude_min": 63.056,             // 高度计（分针）
+  "altitude_10k": 63.056,             // 高度计（万针）
+  "g_meter": 0.92,                    // G力
+  "g_meter_max": 43.74,               // 最大G力
+  "rpm_hour": 2897,                   // 转速表
+  "oil_pressure": 52.0,               // 机油压力
+  "head_temperature": 529.0,          // 缸头温度
+  "fuel": 3182.0,                     // 燃油
+  "flaps": 0.0,                       // 襟翼
+  "gears": 0.5,                       // 起落架
+  "throttle": 0.0,                    // 油门
+  "weapon2": 0.0,                     // 武器2
+  "weapon3": 0.0,                     // 武器3
+  "mach": 0.0,                        // 马赫数
+  "blister1": 1.0                     // 气泡舱盖位置
+  // ... 更多仪表字段
+}</code></pre>
+
+<h3>陆战响应示例（坦克，实测）</h3>
+<pre><code>{
+  "valid": true,
+  "army": "tank",
+  "type": "tankModels/jp_type_5_chi_ri",  // 载具型号
+  "stabilizer": 1.0,                       // 稳定器
+  "gear": 1.0,                             // 档位
+  "gear_neutral": 1.0,                     // 空档
+  "speed": 0.0,                            // 速度（km/h）
+  "has_speed_warning": 0.0,                // 超速警告
+  "rpm": 700.0,                            // RPM
+  "driving_direction_mode": 0.0,           // 驾驶方向模式
+  "cruise_control": 0.0,                   // 巡航控制
+  "lws": -1.0,                             // 激光告警系统
+  "ircm": -1.0,                            // 红外对抗
+  "roll_indicators_is_available": 0.0,     // 滚转指示器
+  "first_stage_ammo": -1.0,                // 一级弹药
+  "crew_total": 6.0,                       // 总乘员
+  "crew_current": 6.0,                     // 当前乘员
+  "crew_distance": 1.0,                    // 乘员间距
+  "gunner_state": 0.0,                     // 炮手状态
+  "driver_state": 0.0                      // 驾驶员状态
+}</code></pre>
+
+<h3>关键字段说明</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>空战</th><th>陆战</th><th>说明</th></tr>
+<tr><td><code>valid</code></td><td>bool</td><td>✅</td><td>✅</td><td>是否有效</td></tr>
+<tr><td><code>type</code></td><td>string</td><td>✅</td><td>✅</td><td>载具型号名</td></tr>
+<tr><td><code>speed</code></td><td>float</td><td>✅</td><td>✅</td><td>速度</td></tr>
+<tr><td><code>compass</code></td><td>float</td><td>✅</td><td>❌</td><td>罗盘航向角</td></tr>
+<tr><td><code>aviahorizon_roll</code></td><td>float</td><td>✅</td><td>❌</td><td>滚转角</td></tr>
+<tr><td><code>aviahorizon_pitch</code></td><td>float</td><td>✅</td><td>❌</td><td>俯仰角</td></tr>
+<tr><td><code>altitude_hour/min/10k</code></td><td>float</td><td>✅</td><td>❌</td><td>高度计读数</td></tr>
+<tr><td><code>g_meter</code></td><td>float</td><td>✅</td><td>❌</td><td>G力</td></tr>
+<tr><td><code>army</code></td><td>string</td><td>❌</td><td>✅</td><td>"tank"</td></tr>
+<tr><td><code>stabilizer</code></td><td>float</td><td>❌</td><td>✅</td><td>稳定器</td></tr>
+<tr><td><code>crew_total/current</code></td><td>float</td><td>❌</td><td>✅</td><td>乘员数</td></tr>
+<tr><td><code>first_stage_ammo</code></td><td>float</td><td>❌</td><td>✅</td><td>一级弹药</td></tr>
+<tr><td><code>lws</code></td><td>float</td><td>❌</td><td>✅</td><td>激光告警</td></tr>
+<tr><td><code>ircm</code></td><td>float</td><td>❌</td><td>✅</td><td>红外对抗</td></tr>
+<tr><td><code>wing_sweep_lever</code></td><td>string</td><td>✅</td><td>❌</td><td>后掠翼角度</td></tr>
+</table>
+</div>
+
+<!-- ============ MAP_OBJ ============ -->
+<div class="card" id="mapobj">
+<h2>3. /map_obj.json — 地图对象</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/map_obj.json</div>
+<div class="note">💡 实测：空战和陆战均可用。返回 JSON 数组，包含小地图上所有对象。</div>
+
+<h3>对象类型（type 字段）</h3>
+<table>
+<tr><th>type</th><th>说明</th><th>实测出现</th></tr>
+<tr><td><code>ground_model</code></td><td>地面单位（坦克等）</td><td>✅ 陆战</td></tr>
+<tr><td><code>aircraft</code></td><td>飞机</td><td>✅ 陆战（飞机出现时）</td></tr>
+<tr><td><code>airfield</code></td><td>机场</td><td>空战</td></tr>
+<tr><td><code>defending_point</code></td><td>防御点</td><td>—</td></tr>
+<tr><td><code>bombing_point</code></td><td>轰炸点</td><td>—</td></tr>
+<tr><td><code>capture_zone</code></td><td>占领区</td><td>✅ 陆战</td></tr>
+<tr><td><code>respawn_base_fighter</code></td><td>战斗机出生点</td><td>✅ 陆战</td></tr>
+<tr><td><code>respawn_base_bomber</code></td><td>轰炸机出生点</td><td>—</td></tr>
+<tr><td><code>respawn_base_tank</code></td><td>坦克出生点</td><td>✅ 陆战</td></tr>
+</table>
+
+<h3>通用字段</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>type</code></td><td>string</td><td>对象类型</td></tr>
+<tr><td><code>color</code></td><td>string</td><td>十六进制颜色码</td></tr>
+<tr><td><code>color[]</code></td><td>array</td><td>RGB 数组</td></tr>
+<tr><td><code>blink</code></td><td>int</td><td>是否闪烁（0=否, 1=是）</td></tr>
+<tr><td><code>icon</code></td><td>string</td><td>图标名（Player=自己）</td></tr>
+<tr><td><code>icon_bg</code></td><td>string</td><td>背景图标</td></tr>
+<tr><td><code>x</code></td><td>float</td><td>归一化 X 坐标（0~1）</td></tr>
+<tr><td><code>y</code></td><td>float</td><td>归一化 Y 坐标（0~1）</td></tr>
+</table>
+
+<h3>飞机专用字段</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>dx</code></td><td>float</td><td><strong>航向向量 X 分量</strong>：cos(V)，范围 -1~1</td></tr>
+<tr><td><code>dy</code></td><td>float</td><td><strong>航向向量 Y 分量</strong>：sin(V)，范围 -1~1</td></tr>
+</table>
+
+<div class="formula">
+航向角计算：angle = atan2(dy, dx) × (180/π)<br>
+模长验证：sqrt(dx² + dy²) = 1.0（归一化向量）
+</div>
+
+<div class="warn">⚠️ <strong>dx/dy 仅 aircraft 类型有</strong>。ground_model 的 Player 对象也有 dx/dy，但意义可能不同。respawn_base 的 dx/dy 值如 300/-300，非方向向量。</div>
+
+<h3>机场专用字段（airfield）</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>sx, sy</code></td><td>float</td><td>跑道起点坐标</td></tr>
+<tr><td><code>ex, ey</code></td><td>float</td><td>跑道终点坐标</td></tr>
+</table>
+
+<h3>图标类型（icon 值）</h3>
+<table>
+<tr><th>icon</th><th>说明</th><th>icon</th><th>说明</th></tr>
+<tr><td>Player</td><td>玩家自己</td><td>Fighter</td><td>战斗机</td></tr>
+<tr><td>Bomber</td><td>轰炸机</td><td>Assault</td><td>攻击机</td></tr>
+<tr><td>MediumTank</td><td>中坦</td><td>HeavyTank</td><td>重坦</td></tr>
+<tr><td>LightTank</td><td>轻坦</td><td>TankDestroyer</td><td>坦歼</td></tr>
+<tr><td>Tracked</td><td>履带式</td><td>Wheeled</td><td>轮式</td></tr>
+<tr><td>Airdefence</td><td>防空单位</td><td>defending_point</td><td>防御点</td></tr>
+<tr><td>bombing_point</td><td>轰炸点</td><td>capture_zone</td><td>占领区</td></tr>
+</table>
+
+<h3>阵营颜色</h3>
+<table>
+<tr><th>颜色</th><th>色值</th><th>含义</th></tr>
+<tr><td>🔵 蓝色</td><td>#174DFF / #185AFF / #134AFF</td><td>友军</td></tr>
+<tr><td>🔴 红色</td><td>#fa0C00 / #fa3200 / #e10B00</td><td>敌军</td></tr>
+<tr><td>🟡 黄色</td><td>#faC81E</td><td>玩家自己（实测）</td></tr>
+<tr><td>🟢 绿色</td><td>#67D756 / #24D921</td><td>盟友（实测）</td></tr>
+</table>
+</div>
+
+<!-- ============ MAP_INFO ============ -->
+<div class="card" id="mapinfo">
+<h2>4. /map_info.json — 地图信息</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/map_info.json</div>
+<div class="endpoint url">http://localhost:8111/map.img</div>
+
+<h3>响应示例</h3>
+<pre><code>{
+  "grid_steps": [3250.0, 3250.0],     // 网格步长（米）
+  "grid_zero": [-32768.0, 32768.0],  // 网格原点
+  "grid_size": [1650.0, 1600.0],     // 网格大小（实测补充）
+  "map_generation": 1,               // 地图版本
+  "map_max": [32768.0, 32768.0],     // 地图最大坐标
+  "map_min": [-32768.0, -32768.0],   // 地图最小坐标
+  "hud_type": 1,                     // HUD类型（实测补充）
+  "valid": true                      // 实测补充
+}</code></pre>
+
+<h3>坐标转换公式</h3>
+<div class="formula">
+归一化坐标(0~1) → 实际距离(米)：<br>
+实际X = x × (map_max[0] - map_min[0]) + map_min[0]<br>
+实际Y = y × (map_max[1] - map_min[1]) + map_min[1]<br><br>
+两点距离 = sqrt((x1-x2)² + (y1-y2)²) × map_max[0]<br>
+（简化版，假设 map_max[0] = map_max[1]）
+</div>
+
+<div class="note">💡 实测中 map_max=[4096, 4096]，归一化差 0.01 ≈ 41 米。</div>
+</div>
+
+<!-- ============ MISSION ============ -->
+<div class="card" id="mission">
+<h2>5. /mission.json — 任务信息</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/mission.json</div>
+
+<h3>响应示例</h3>
+<pre><code>{
+  "objectives": [
+    {
+      "primary": true,           // 是否主要目标
+      "status": "in_progress",   // 状态：in_progress / completed / failed
+      "text": "Decole"           // 目标描述
+    }
+  ],
+  "status": "running"            // 任务状态：running / fail
+}</code></pre>
+
+<h3>字段说明</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>objectives</code></td><td>array</td><td>任务目标数组</td></tr>
+<tr><td><code>objectives[].primary</code></td><td>bool</td><td>是否主要目标</td></tr>
+<tr><td><code>objectives[].status</code></td><td>string</td><td>in_progress / completed / failed</td></tr>
+<tr><td><code>objectives[].text</code></td><td>string</td><td>目标描述文字</td></tr>
+<tr><td><code>status</code></td><td>string</td><td>running / fail</td></tr>
+</table>
+</div>
+
+<!-- ============ HUDMSG ============ -->
+<div class="card" id="hudmsg">
+<h2>6. /hudmsg — HUD 消息（击杀/伤害事件）</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/hudmsg?lastEvt=0&lastDmg=0</div>
+
+<div class="warn">⚠️ 需要查询参数，直接访问返回 400 Bad Request。</div>
+
+<h3>查询参数</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>lastEvt</code></td><td>int</td><td>上次获取到的事件 ID，返回此 ID 之后的事件</td></tr>
+<tr><td><code>lastDmg</code></td><td>int</td><td>上次获取到的伤害 ID，返回此 ID 之后的伤害</td></tr>
+</table>
+<div class="note">ID 从 0 开始递增，跨场不重置（第二局从上一局最后一个 ID 继续）。</div>
+
+<h3>响应示例</h3>
+<pre><code>{
+  "events": [],    // 事件列表（通常为空）
+  "damage": [      // 伤害/击杀事件列表
+    {
+      "id": 161,
+      "msg": "percusiones1r (Spitfire) set afire *shino_rs (Spitfire)",
+      "sender": "",
+      "enemy": false,
+      "mode": ""
+    },
+    {
+      "id": 162,
+      "msg": "*shino_rs (Spitfire) has crashed.",
+      "sender": "",
+      "enemy": false,
+      "mode": ""
+    }
+  ]
+}</code></pre>
+
+<h3>字段说明</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>id</code></td><td>int</td><td>消息 ID</td></tr>
+<tr><td><code>msg</code></td><td>string</td><td>消息内容（击杀/起火/坠毁等）</td></tr>
+<tr><td><code>sender</code></td><td>string</td><td>发送者</td></tr>
+<tr><td><code>enemy</code></td><td>bool</td><td>是否敌方</td></tr>
+<tr><td><code>mode</code></td><td>string</td><td>模式</td></tr>
+</table>
+</div>
+
+<!-- ============ GAMECHAT ============ -->
+<div class="card" id="gamechat">
+<h2>7. /gamechat — 游戏聊天</h2>
+<div class="endpoint get">GET</div> <div class="endpoint url">http://localhost:8111/gamechat?lastId=0</div>
+
+<div class="warn">⚠️ 需要查询参数，直接访问返回 400 Bad Request。</div>
+
+<h3>查询参数</h3>
+<table>
+<tr><th>参数</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>lastId</code></td><td>int</td><td>返回此 ID 之后的所有聊天消息</td></tr>
+</table>
+
+<h3>响应示例</h3>
+<pre><code>[
+  {
+    "id": 70,
+    "msg": "hahaha",
+    "sender": "pecusgaming",
+    "enemy": false,
+    "mode": "All"
+  },
+  {
+    "id": 71,
+    "msg": "this thing is slightly op tbh",
+    "sender": "pecusgaming",
+    "enemy": false,
+    "mode": "All"
+  }
+]</code></pre>
+
+<h3>字段说明</h3>
+<table>
+<tr><th>字段</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>id</code></td><td>int</td><td>消息 ID</td></tr>
+<tr><td><code>msg</code></td><td>string</td><td>消息内容</td></tr>
+<tr><td><code>sender</code></td><td>string</td><td>玩家名</td></tr>
+<tr><td><code>enemy</code></td><td>bool</td><td>是否敌方玩家</td></tr>
+<tr><td><code>mode</code></td><td>string</td><td>聊天频道（All 等）</td></tr>
+</table>
+</div>
+
+<!-- ============ 实测对比 ============ -->
+<div class="card" id="summary">
+<h2>📝 文档 vs 实测对比总结</h2>
+
+<h3>文档未提及但实测发现的</h3>
+<table>
+<tr><th>发现</th><th>说明</th></tr>
+<tr><td>陆战 /state 不可用</td><td>文档示例只展示了空战飞机数据，未说明陆战 valid=false</td></tr>
+<tr><td>陆战 /indicators 字段完全不同</td><td>飞机有 compass/altitude/g_meter，坦克有 army/crew/stabilizer/lws/ircm</td></tr>
+<tr><td>map_obj 坐标是归一化 0~1</td><td>文档未说明坐标系，实测确认是归一化值</td></tr>
+<tr><td>map_info 有 grid_size 和 hud_type 字段</td><td>文档未列出这两个字段</td></tr>
+<tr><td>Player 对象颜色是黄色 #faC81E</td><td>文档未列出玩家颜色</td></tr>
+<tr><td>绿色 #67D756 是盟友</td><td>文档未提及</td></tr>
+<tr><td>陆战有 respawn_base_tank 类型</td><td>文档未列出此类型</td></tr>
+<tr><td>陆战有 capture_zone 类型</td><td>文档未列出此类型</td></tr>
+</table>
+
+<h3>对空提前量计算相关数据可用性</h3>
+<table>
+<tr><th>需要的数据</th><th>端点</th><th>空战</th><th>陆战</th></tr>
+<tr><td>己方高度</td><td>/state → H, m</td><td class="ok">✅</td><td class="bad">❌</td></tr>
+<tr><td>己方垂直速度</td><td>/state → Vy, m/s</td><td class="ok">✅</td><td class="bad">❌</td></tr>
+<tr><td>己方航向</td><td>/indicators → compass</td><td class="ok">✅</td><td class="bad">❌</td></tr>
+<tr><td>己方速度</td><td>/state → TAS/IAS</td><td class="ok">✅</td><td class="ok">✅ (/indicators → speed)</td></tr>
+<tr><td>己方位置</td><td>/state</td><td class="warn">⚠️ 有经纬度</td><td class="bad">❌ (仅 Player x/y)</td></tr>
+<tr><td>敌机位置</td><td>/map_obj → x, y</td><td class="ok">✅</td><td class="ok">✅ (2D归一化)</td></tr>
+<tr><td>敌机航向</td><td>/map_obj → dx, dy</td><td class="ok">✅</td><td class="ok">✅</td></tr>
+<tr><td><strong>敌机高度</strong></td><td>—</td><td class="bad">❌ 无</td><td class="bad">❌ 无</td></tr>
+<tr><td>敌机速度</td><td>—</td><td class="warn">⚠️ 差分</td><td class="warn">⚠️ 差分</td></tr>
+</table>
+
+<div class="warn">
+<strong>最终结论：</strong>即使在空战中，8111 也<strong>无法提供敌机高度</strong>。/state 只提供己方高度，map_obj 只有 2D 坐标。这是 8111 接口的根本限制，不是模式问题。
+</div>
+</div>
+
+<div class="footer">
+文档来源：github.com/lucasvmx/WarThunder-localhost-documentation (MIT License)<br>
+中文翻译整理 + 实测数据补充 · 2026-08-26
+</div>
+
+</body>
+</html>
