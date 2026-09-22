@@ -32,7 +32,8 @@ GROUND_HUD = os.path.join(BASE_DIR, "wt_hud_v2.py")
 # 模式常量
 MODE_NONE = "none"       # 机库/菜单/游戏未运行
 MODE_AIR = "air"         # 空战
-MODE_GROUND = "ground"   # 陆战
+MODE_GROUND = "ground"   # 陆战（海战也归到这里，用同一个 HUD）
+MODE_UNKNOWN = "unknown" # 认不出载具类型 → 保持当前 HUD，不乱切
 
 
 def check_8111():
@@ -46,21 +47,44 @@ def check_8111():
 
 
 def detect_mode(ind):
-    """根据 indicators 判断当前模式"""
+    """
+    根据 indicators 判断当前模式。
+
+    ⚠ 不能写「含 tank 就是陆战，否则一律空战」——
+    舰船(shipModels)、直升机(helicopterModels)、以及载入过程中 type 还是
+    "?" / 空字符串 的情况都会被误判成空战，导致 HUD 乱切。
+    现在按 type 前缀 + army 字段显式分类，认不出来就返回 MODE_UNKNOWN
+    （调用方据此保持现状、不切换）。
+    """
     if not ind:
         return MODE_NONE, "8111 端口不可达（游戏未运行）"
 
     if not ind.get("valid", False):
         return MODE_NONE, "游戏中但不在战斗（机库/菜单）"
 
-    army = ind.get("army", "")
-    vtype = ind.get("type", "")
+    army = str(ind.get("army", "") or "").lower()
+    vtype = str(ind.get("type", "") or "").lower()
+    # type 形如 "tankModels/us_t26e4_superpershing"，取前缀判断
+    prefix = vtype.split("/")[0] if "/" in vtype else ""
 
-    # 陆战：army == "tank" 或 type 含 tank
-    if army == "tank" or "tank" in vtype:
+    # 载具还没载入完：type 可能是 "?" 或空
+    if vtype in ("", "?", "unknown") and not army:
+        return MODE_UNKNOWN, "载具信息载入中…"
+
+    # ---- 陆战 ----
+    if prefix.startswith("tank") or army == "tank":
         return MODE_GROUND, f"陆战（{vtype.split('/')[-1]}）"
-    else:
-        return MODE_AIR, f"空战（{vtype}）"
+
+    # ---- 空战 ----
+    if prefix.startswith("aircraft") or prefix.startswith("plane") \
+            or prefix.startswith("helicopter") or army == "air":
+        return MODE_AIR, f"空战（{vtype.split('/')[-1] or vtype}）"
+
+    # ---- 海战：没有专门的 HUD，沿用陆战（同样基于 map_obj，能显示目标/方位）----
+    if prefix.startswith("ship") or prefix.startswith("boat") or army == "ship":
+        return MODE_GROUND, f"海战（{vtype.split('/')[-1]}）→ 用陆战 HUD"
+
+    return MODE_UNKNOWN, f"未知载具类型（{vtype or '空'}），保持当前 HUD"
 
 
 def launch_hud(script_path, label, proc_holder):
@@ -135,6 +159,16 @@ def run_watch():
         while True:
             ind = check_8111()
             mode, desc = detect_mode(ind)
+
+            # 认不出载具类型（载入中/新类型）：保持现状，不切换也不停 HUD
+            if mode == MODE_UNKNOWN:
+                mode_confirm_count = 0
+                status_line = f"  [{time.strftime('%H:%M:%S')}] 模式: 保持   {desc}"
+                if status_line != last_print:
+                    print(status_line, flush=True)
+                    last_print = status_line
+                time.sleep(1.5)
+                continue
 
             if mode != current_mode:
                 mode_confirm_count += 1

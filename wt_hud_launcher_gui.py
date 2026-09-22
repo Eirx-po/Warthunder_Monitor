@@ -52,6 +52,7 @@ AIR_HUD = _resolve("wt_air_hud", "hud_overlay.py")
 GROUND_HUD = _resolve("wt_hud_v2.py")
 LAYOUT_JSON = _resolve("wt_air_hud", "hud_layout.json")
 POWER_CURVE = _resolve("wt_power_curve.py")
+DAEMON = _resolve("wt_hud_launcher.py")   # 守护模式：按载具自动切换空战/陆战
 
 PYTHON = (r"C:\Users\Administrator\.workbuddy\binaries\python"
           r"\versions\3.13.12\python.exe")
@@ -80,12 +81,12 @@ def fetch_indicators():
 HUD_SCRIPTS = ("hud_overlay.py", "wt_hud_v2.py")
 
 
-def _pids_from_lines(text):
-    """从含 '命令行 ... PID' 的文本里挑出 HUD 进程 PID"""
+def _pids_from_lines(text, scripts):
+    """从含 '命令行 ... PID' 的文本里挑出匹配脚本名的进程 PID"""
     pids = []
     for line in text.splitlines():
         low = line.lower()
-        if not any(s in low for s in HUD_SCRIPTS):
+        if not any(s in low for s in scripts):
             continue
         # 取行内最后一个整数当 PID（兼容 csv / 表格两种输出）
         for tok in reversed(line.replace(",", " ").split()):
@@ -93,6 +94,32 @@ def _pids_from_lines(text):
                 pids.append(int(tok))
                 break
     return pids
+
+
+def _scan_pids(scripts):
+    """按命令行关键字扫描 python 进程 PID（wmic 失败自动走 PowerShell CIM）"""
+    try:
+        out = subprocess.run(
+            ["wmic", "process", "where", "name='python.exe'", "get",
+             "processid,commandline", "/format:csv"],
+            capture_output=True, text=True, encoding="gbk", errors="replace",
+            timeout=5)
+        pids = _pids_from_lines(out.stdout or "", scripts)
+        if pids:
+            return pids
+    except Exception:
+        pass
+
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+          "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15)
+        return _pids_from_lines(out.stdout or "", scripts)
+    except Exception:
+        return []
 
 
 def hud_pids():
@@ -103,29 +130,12 @@ def hud_pids():
     一旦它不可用且没有兜底，"停止 HUD" 会静默失效（残留 HUD 关不掉）。
     所以先试 wmic，失败再走 PowerShell CIM。
     """
-    try:
-        out = subprocess.run(
-            ["wmic", "process", "where", "name='python.exe'", "get",
-             "processid,commandline", "/format:csv"],
-            capture_output=True, text=True, encoding="gbk", errors="replace",
-            timeout=5)
-        pids = _pids_from_lines(out.stdout or "")
-        if pids:
-            return pids
-    except Exception:
-        pass
+    return _scan_pids(HUD_SCRIPTS)
 
-    # 兜底：PowerShell CIM（Win11 上更可靠）
-    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-          "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
-    try:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15)
-        return _pids_from_lines(out.stdout or "")
-    except Exception:
-        return []
+
+def daemon_pids():
+    """找出正在运行的守护进程 PID（自动按载具切换模式）"""
+    return _scan_pids(("wt_hud_launcher.py",))
 
 
 class Launcher(QMainWindow):
@@ -135,6 +145,7 @@ class Launcher(QMainWindow):
         self.setMinimumWidth(430)
         self.proc = None          # HUD 进程（受启停管理）
         self.tool_proc = None     # 独立工具进程（不与 HUD 联动）
+        self.auto_proc = None     # 守护进程（自动切换模式）
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -153,16 +164,23 @@ class Launcher(QMainWindow):
             f1.addWidget(lb)
         v.addWidget(g_state)
 
-        # ---- 按钮 ----
+        # ---- 按钮第一行：手动指定 ----
         h = QHBoxLayout()
         self.bt_air = QPushButton("启动 空战HUD")
         self.bt_gnd = QPushButton("启动 陆战HUD")
         self.bt_stop = QPushButton("停止 HUD")
-        self.bt_restart = QPushButton("重启 HUD")
-        for b in (self.bt_air, self.bt_gnd, self.bt_stop, self.bt_restart):
+        for b in (self.bt_air, self.bt_gnd, self.bt_stop):
             b.setMinimumHeight(30)
             h.addWidget(b)
         v.addLayout(h)
+
+        # 第二行：自动切换（守护进程，按载具类型自己换 HUD）
+        hauto = QHBoxLayout()
+        self.bt_auto = QPushButton("自动切换（按载具）")
+        self.bt_auto.setMinimumHeight(30)
+        self.bt_auto.setCheckable(True)
+        hauto.addWidget(self.bt_auto)
+        v.addLayout(hauto)
 
         # 工具按钮独占一行：动力曲线是独立进程，不参与 HUD 的启停管理
         h2t = QHBoxLayout()
@@ -174,8 +192,8 @@ class Launcher(QMainWindow):
         self.bt_air.clicked.connect(lambda: self.start(AIR_HUD))
         self.bt_gnd.clicked.connect(lambda: self.start(GROUND_HUD))
         self.bt_stop.clicked.connect(self.stop)
-        self.bt_restart.clicked.connect(self.restart)
         self.bt_curve.clicked.connect(self.start_curve)
+        self.bt_auto.toggled.connect(self.toggle_auto)
 
         # ---- 开关 ----
         g_opt = QGroupBox("开关（改动后需重启 HUD）")
@@ -295,6 +313,8 @@ class Launcher(QMainWindow):
 
     # ---- 控制 ----
     def start(self, script):
+        # 手动指定模式 ⇒ 先退掉自动切换，否则守护进程会把 HUD 又换回去
+        self.stop_auto(silent=True)
         self.stop(silent=True)
         if not os.path.exists(script):
             self.say(f"找不到脚本: {script}")
@@ -317,6 +337,9 @@ class Launcher(QMainWindow):
             except Exception:
                 pass
         self.proc = None
+        # 自动切换也一并关掉：否则守护进程会立刻把 HUD 又拉起来，
+        # 用户点了"停止 HUD"却看到它自己复活，很困惑
+        self.stop_auto(silent=True)
         # 再清理残留（比如别的途径启动的）
         for pid in hud_pids():
             try:
@@ -326,6 +349,61 @@ class Launcher(QMainWindow):
                 pass
         if not silent:
             self.say("已停止 HUD")
+
+    # ---- 自动切换（守护模式）----
+    def toggle_auto(self, on):
+        if on:
+            self.stop(silent=True)          # 先停掉手动 HUD，交给守护管
+            self.start_auto()
+        else:
+            self.stop_auto()
+
+    def start_auto(self):
+        if self.auto_proc is not None and self.auto_proc.poll() is None:
+            self.say(f"守护模式已在运行 (PID {self.auto_proc.pid})")
+            return
+        if not os.path.exists(DAEMON):
+            self.bt_auto.setChecked(False)
+            self.say(f"找不到脚本: {DAEMON}")
+            return
+        try:
+            flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
+            self.auto_proc = subprocess.Popen(
+                [PYTHON, "-u", DAEMON, "--watch"], cwd=os.path.dirname(DAEMON),
+                env=self.build_env(), creationflags=flags)
+            self.say(f"自动切换已开启 (PID {self.auto_proc.pid}) — "
+                     f"进战斗后按载具自动选空战/陆战 HUD")
+        except Exception as e:
+            self.bt_auto.setChecked(False)
+            self.say(f"启动失败: {e}")
+
+    def stop_auto(self, silent=False):
+        if self.auto_proc is not None and self.auto_proc.poll() is None:
+            try:
+                self.auto_proc.kill()
+            except Exception:
+                pass
+        self.auto_proc = None
+        # 清掉可能由别的途径拉起的守护进程
+        for pid in daemon_pids():
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=5)
+            except Exception:
+                pass
+        # 顺带收掉守护拉起的 HUD：否则关了自动切换，屏幕上还留着一个 HUD，很莫名
+        for pid in hud_pids():
+            try:
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                               capture_output=True, timeout=5)
+            except Exception:
+                pass
+        # blockSignals 避免 setChecked(False) 再触发 toggled → 递归回调
+        self.bt_auto.blockSignals(True)
+        self.bt_auto.setChecked(False)
+        self.bt_auto.blockSignals(False)
+        if not silent:
+            self.say("已关闭自动切换")
 
     def start_curve(self):
         """

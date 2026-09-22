@@ -23,9 +23,14 @@ All data comes from the game client's built-in local HTTP service **`localhost:8
 
 ## 快速开始 / Quick Start
 
+推荐用法：**双击 `start_hud_gui.bat`，点「自动切换（按载具）」**，之后不用管——
+进战斗后守护进程会按载具类型自动拉起空战或陆战 HUD，回机库自动收起。
+Recommended: **double-click `start_hud_gui.bat`, click "Auto-switch (by vehicle)"** —
+a daemon then launches the air or ground HUD per vehicle, and clears it in the hangar.
+
 | 双击运行 / Double-click | 打开的是 / What it opens | 说明 / Notes |
 |---|---|---|
-| `start_hud_gui.bat` | **启动器窗口**（推荐）/ **Launcher GUI** (recommended) | 状态显示 + 启停按钮 + 布局设置，日常用这个<br>Status + start/stop buttons + layout settings; daily driver |
+| `start_hud_gui.bat` | **启动器窗口**（推荐）/ **Launcher GUI** (recommended) | 状态显示 + 启停按钮 + **自动切换** + 布局设置<br>Status + start/stop + **auto-switch** + layout settings |
 | `start_wt_hud.bat` | 守护模式 / Daemon mode | 无窗口，按载具自动切空战/陆战 HUD（`--watch`）<br>Headless; auto-switches air/ground HUD by vehicle (`--watch`) |
 | `start_power_curve.bat` | 动力曲线窗口 / Power-curve window | 独立工具，与 HUD 互不影响<br>Standalone tool; independent of the HUD |
 | `wt_air_hud\start_air_hud.bat` | 仅空战 HUD / Air HUD only | 直接拉起空战覆盖层<br>Launches the air overlay directly |
@@ -162,6 +167,34 @@ Normalized 0–1 spans the full `map_min`~`map_max` range; the real span is `map
 **同一目标会拆成多条记录 / One target, many records**:
 一个防空阵地 = 3 炮 + 1 SPAA，相距 3~30m。必须按位置聚类去重，否则箭头重叠成"残影"。
 One AA position = 3 guns + 1 SPAA within 3–30 m. Cluster by position and dedupe, or the edge arrows overlap into "ghosting".
+
+---
+
+## 自动区分空战 / 陆战 / Auto mode detection
+
+守护进程每 1.5 秒读一次 `/indicators`，按 `type` 前缀和 `army` 字段判断载具，
+连续 3 次一致才切换（去抖，避免载入过程中乱切）。
+The daemon polls `/indicators` every 1.5 s and classifies by `type` prefix and `army`,
+switching only after 3 consistent reads (debounce against the loading screen).
+
+| 载具 / Vehicle | `type` 前缀 / prefix | 结果 / Result |
+|---|---|---|
+| 坦克 / Tank | `tankModels/`、`army=tank` | 陆战 HUD |
+| 飞机 / Aircraft | `aircraftModels/`、`planeModels/` | 空战 HUD |
+| 直升机 / Helicopter | `helicopterModels/` | 空战 HUD |
+| 舰船 / Ship | `shipModels/` | 陆战 HUD（无专用海战 HUD，同样基于 `map_obj`） |
+| 载入中 / Loading | `?` 或空 | **保持现状，不切换** |
+| 机库 / Hangar | `valid=false` | 收起所有 HUD |
+
+> ⚠ 旧逻辑是「不含 tank 就当空战」，会把舰船、直升机和载入中的 `?` 全误判成空战。
+> 现在认不出类型一律返回 `unknown` 并保持当前 HUD。
+> The old "anything not `tank` is air" rule misclassified ships, helicopters and a
+> half-loaded `?` as air. Unrecognized types now yield `unknown` and keep the current HUD.
+
+开启方式：启动器 GUI 里点「自动切换（按载具）」按钮（可按灭取消），或命令行
+`python wt_hud_launcher.py --watch`。
+Enable via the launcher's "Auto-switch (by vehicle)" toggle, or
+`python wt_hud_launcher.py --watch`.
 
 ---
 
