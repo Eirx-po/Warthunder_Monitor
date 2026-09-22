@@ -36,6 +36,55 @@ MODE_GROUND = "ground"   # 陆战（海战也归到这里，用同一个 HUD）
 MODE_UNKNOWN = "unknown" # 认不出载具类型 → 保持当前 HUD，不乱切
 
 
+def game_running():
+    """
+    游戏进程是否存在（不管在前台还是后台）。
+
+    用途：游戏退了就把 HUD 收掉，避免留下一个孤零零的透明窗口。
+    检测失败时返回 True —— 宁可不关，也不能误关。
+    """
+    try:
+        from wt_foreground import is_war_thunder_running
+        return is_war_thunder_running()
+    except Exception:
+        return True
+
+
+def hud_pids():
+    """扫出所有 HUD 进程 PID（含不是本守护拉起的），用于清理残留"""
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+          "ForEach-Object { $_.CommandLine + ' ' + $_.ProcessId }")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15)
+        pids = []
+        for line in (out.stdout or "").splitlines():
+            low = line.lower()
+            if ("hud_overlay.py" in low) or ("wt_hud_v2.py" in low):
+                for tok in reversed(line.replace(",", " ").split()):
+                    if tok.isdigit():
+                        pids.append(int(tok))
+                        break
+        return pids
+    except Exception:
+        return []
+
+
+def kill_stray_huds():
+    """杀掉所有 HUD 进程（含别的途径启动的），返回杀掉的数量"""
+    n = 0
+    for pid in hud_pids():
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                           capture_output=True, timeout=5)
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
 def check_8111():
     """检查 8111 端口是否可达，返回 indicators"""
     try:
@@ -154,11 +203,20 @@ def run_watch():
         else:
             stop_hud(AIR_HUD, proc_holder)
             stop_hud(GROUND_HUD, proc_holder)
+            # 顺带清理不是本守护拉起的 HUD（比如从 GUI 手动启的），
+            # 否则游戏退了屏幕上还留着一个透明窗口
+            n = kill_stray_huds()
+            if n:
+                print(f"  [HUD] 额外清理残留 HUD 进程 {n} 个", flush=True)
 
     try:
         while True:
             ind = check_8111()
-            mode, desc = detect_mode(ind)
+            # 游戏进程没了就强制收起 HUD（不等 8111 超时）
+            if not game_running():
+                mode, desc = MODE_NONE, "游戏进程未运行，已收起 HUD"
+            else:
+                mode, desc = detect_mode(ind)
 
             # 认不出载具类型（载入中/新类型）：保持现状，不切换也不停 HUD
             if mode == MODE_UNKNOWN:

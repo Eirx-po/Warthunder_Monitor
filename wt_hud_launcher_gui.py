@@ -138,6 +138,21 @@ def daemon_pids():
     return _scan_pids(("wt_hud_launcher.py",))
 
 
+def detect_mode(ind):
+    """模式判定统一走 wt_hud_launcher，避免 GUI 里再复制一份（会走样）"""
+    from wt_hud_launcher import detect_mode as _dm
+    return _dm(ind)
+
+
+def game_running():
+    """游戏进程是否存在（进程级，不看前台）"""
+    try:
+        from wt_foreground import is_war_thunder_running
+        return is_war_thunder_running()
+    except Exception:
+        return True
+
+
 class Launcher(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -164,23 +179,16 @@ class Launcher(QMainWindow):
             f1.addWidget(lb)
         v.addWidget(g_state)
 
-        # ---- 按钮第一行：手动指定 ----
+        # ---- 按钮 ----
+        # GUI 不再区分空战/陆战：只有一个「启动 HUD」，由守护进程按载具自动选。
+        # 手动选模式容易选错，且自动分类现在已可靠（见 detect_mode）。
         h = QHBoxLayout()
-        self.bt_air = QPushButton("启动 空战HUD")
-        self.bt_gnd = QPushButton("启动 陆战HUD")
+        self.bt_start = QPushButton("启动 HUD（自动识别载具）")
         self.bt_stop = QPushButton("停止 HUD")
-        for b in (self.bt_air, self.bt_gnd, self.bt_stop):
+        for b in (self.bt_start, self.bt_stop):
             b.setMinimumHeight(30)
             h.addWidget(b)
         v.addLayout(h)
-
-        # 第二行：自动切换（守护进程，按载具类型自己换 HUD）
-        hauto = QHBoxLayout()
-        self.bt_auto = QPushButton("自动切换（按载具）")
-        self.bt_auto.setMinimumHeight(30)
-        self.bt_auto.setCheckable(True)
-        hauto.addWidget(self.bt_auto)
-        v.addLayout(hauto)
 
         # 工具按钮独占一行：动力曲线是独立进程，不参与 HUD 的启停管理
         h2t = QHBoxLayout()
@@ -189,11 +197,9 @@ class Launcher(QMainWindow):
         h2t.addWidget(self.bt_curve)
         v.addLayout(h2t)
 
-        self.bt_air.clicked.connect(lambda: self.start(AIR_HUD))
-        self.bt_gnd.clicked.connect(lambda: self.start(GROUND_HUD))
+        self.bt_start.clicked.connect(self.start_auto)
         self.bt_stop.clicked.connect(self.stop)
         self.bt_curve.clicked.connect(self.start_curve)
-        self.bt_auto.toggled.connect(self.toggle_auto)
 
         # ---- 开关 ----
         g_opt = QGroupBox("开关（改动后需重启 HUD）")
@@ -350,20 +356,16 @@ class Launcher(QMainWindow):
         if not silent:
             self.say("已停止 HUD")
 
-    # ---- 自动切换（守护模式）----
-    def toggle_auto(self, on):
-        if on:
-            self.stop(silent=True)          # 先停掉手动 HUD，交给守护管
-            self.start_auto()
-        else:
-            self.stop_auto()
-
     def start_auto(self):
-        if self.auto_proc is not None and self.auto_proc.poll() is None:
-            self.say(f"守护模式已在运行 (PID {self.auto_proc.pid})")
+        """启动守护进程：按载具自动选空战/陆战 HUD（GUI 唯一的启动方式）"""
+        # ⚠ 必须做系统级检查：只看 self.auto_proc 的话，
+        # 已经有一个守护在跑（比如命令行拉起的）时会再起一个，两个守护互相打架
+        existing = daemon_pids()
+        if existing:
+            self.auto_proc = None
+            self.say(f"自动模式已在运行 (PID {', '.join(map(str, existing))})")
             return
         if not os.path.exists(DAEMON):
-            self.bt_auto.setChecked(False)
             self.say(f"找不到脚本: {DAEMON}")
             return
         try:
@@ -374,7 +376,6 @@ class Launcher(QMainWindow):
             self.say(f"自动切换已开启 (PID {self.auto_proc.pid}) — "
                      f"进战斗后按载具自动选空战/陆战 HUD")
         except Exception as e:
-            self.bt_auto.setChecked(False)
             self.say(f"启动失败: {e}")
 
     def stop_auto(self, silent=False):
@@ -398,10 +399,6 @@ class Launcher(QMainWindow):
                                capture_output=True, timeout=5)
             except Exception:
                 pass
-        # blockSignals 避免 setChecked(False) 再触发 toggled → 递归回调
-        self.bt_auto.blockSignals(True)
-        self.bt_auto.setChecked(False)
-        self.bt_auto.blockSignals(False)
         if not silent:
             self.say("已关闭自动切换")
 
@@ -430,13 +427,15 @@ class Launcher(QMainWindow):
             self.say(f"启动失败: {e}")
 
     def restart(self):
-        pids = hud_pids()
-        target = AIR_HUD
-        if pids:
-            # 判断当前跑的是哪个（简化：默认空战）
-            target = AIR_HUD
-        self.say("重启 HUD…")
-        self.start(target)
+        """
+        应用布局设置后重启。
+
+        ⚠ 不要硬编码成空战 HUD（旧代码就是这么写的）——
+        GUI 已经不区分模式了，重启一律回到自动识别。
+        """
+        self.say("重启 HUD（自动识别载具）…")
+        self.stop(silent=True)
+        self.start_auto()
 
     # ---- 布局读写 ----
     def load_layout_ui(self):
@@ -507,8 +506,13 @@ class Launcher(QMainWindow):
     def refresh(self):
         ind = fetch_indicators()
         if ind is None:
-            self.lb_game.setText("游戏: 未运行 / 8111 不可达")
-            self.lb_game.setStyleSheet(f"color: {MUTED.name()}")
+            # 8111 不可达 ≠ 游戏没开（刚启动时接口还没起来），用进程检测区分
+            if game_running():
+                self.lb_game.setText("游戏: 进程已运行，等待 8111 接口…")
+                self.lb_game.setStyleSheet(f"color: {AMBER.name()}")
+            else:
+                self.lb_game.setText("游戏: 未运行")
+                self.lb_game.setStyleSheet(f"color: {MUTED.name()}")
             self.lb_mode.setText("模式: —")
             self.lb_mode.setStyleSheet(f"color: {MUTED.name()}")
         elif not ind.get("valid", False):
@@ -518,11 +522,12 @@ class Launcher(QMainWindow):
             self.lb_mode.setStyleSheet(f"color: {MUTED.name()}")
         else:
             vtype = ind.get("type", "?")
-            army = ind.get("army", "")
+            # 模式判定复用守护进程的实现，不在这里另写一份
+            _mode, desc = detect_mode(ind)
             self.lb_game.setText(f"游戏: 战斗中  {vtype}")
             self.lb_game.setStyleSheet(f"color: {GREEN.name()}")
-            mode = "陆战" if (army == "tank" or "tank" in vtype) else "空战"
-            self.lb_mode.setText(f"模式: {mode}")
+            # desc 已含中文模式名（如"空战（f_16xl）"），不要再拼一次
+            self.lb_mode.setText(f"模式: {desc}")
             self.lb_mode.setStyleSheet(f"color: {GREEN.name()}")
 
         pids = hud_pids()

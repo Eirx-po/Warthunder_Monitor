@@ -59,6 +59,62 @@ def _window_title(hwnd):
     return buf.value
 
 
+# ---- 进程是否存在（不关心前台/后台）----
+TH32CS_SNAPPROCESS = 0x00000002
+INVALID_HANDLE_VALUE = -1
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.c_void_p),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", wintypes.WCHAR * 260),
+    ]
+
+
+def war_thunder_pids():
+    """
+    列出所有 War Thunder 相关进程 PID（不管在前台还是后台）。
+
+    用 Toolhelp32 快照，不开子进程，守护循环里每 1.5 秒调也不心疼。
+    """
+    pids = []
+    try:
+        snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snap == INVALID_HANDLE_VALUE or snap is None:
+            return pids
+        try:
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                name = (entry.szExeFile or "").lower()
+                if name in WT_PROCESS_NAMES:
+                    pids.append(entry.th32ProcessID)
+                ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+        finally:
+            kernel32.CloseHandle(snap)
+    except Exception:
+        pass
+    return pids
+
+
+def is_war_thunder_running():
+    """游戏进程是否存在（用于"游戏退了就自动关 HUD"）"""
+    try:
+        return bool(war_thunder_pids())
+    except Exception:
+        # 检测失败时宁可认为还在运行，避免误关 HUD
+        return True
+
+
 def foreground_info():
     """返回 (进程名, 窗口标题)，失败返回 (None, '')"""
     hwnd = user32.GetForegroundWindow()

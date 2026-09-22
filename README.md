@@ -23,10 +23,13 @@ All data comes from the game client's built-in local HTTP service **`localhost:8
 
 ## 快速开始 / Quick Start
 
-推荐用法：**双击 `start_hud_gui.bat`，点「自动切换（按载具）」**，之后不用管——
-进战斗后守护进程会按载具类型自动拉起空战或陆战 HUD，回机库自动收起。
-Recommended: **double-click `start_hud_gui.bat`, click "Auto-switch (by vehicle)"** —
-a daemon then launches the air or ground HUD per vehicle, and clears it in the hangar.
+推荐用法：**双击 `start_hud_gui.bat`，点「启动 HUD（自动识别载具）」**，之后不用管——
+进战斗后守护进程按载具类型自动拉起空战或陆战 HUD，**游戏退出则自动收起**。
+Recommended: **double-click `start_hud_gui.bat`, click "Start HUD (auto-detect)"** —
+a daemon picks the air or ground HUD per vehicle and **clears it when the game exits**.
+
+> GUI 只有「启动 / 停止」两个按钮，**不区分空战陆战**——手动选模式容易选错，
+> 分类交给守护进程。The GUI has only Start/Stop; it does **not** ask you to pick a mode.
 
 | 双击运行 / Double-click | 打开的是 / What it opens | 说明 / Notes |
 |---|---|---|
@@ -191,10 +194,18 @@ switching only after 3 consistent reads (debounce against the loading screen).
 > The old "anything not `tank` is air" rule misclassified ships, helicopters and a
 > half-loaded `?` as air. Unrecognized types now yield `unknown` and keep the current HUD.
 
-开启方式：启动器 GUI 里点「自动切换（按载具）」按钮（可按灭取消），或命令行
+开启方式：启动器 GUI 里点「启动 HUD（自动识别载具）」，或命令行
 `python wt_hud_launcher.py --watch`。
-Enable via the launcher's "Auto-switch (by vehicle)" toggle, or
+Enable via the launcher's "Start HUD (auto-detect)" button, or
 `python wt_hud_launcher.py --watch`.
+
+**游戏退出自动收起 / Auto-close when the game exits**
+守护每轮还会检查 `aces.exe` 是否还在（Toolhelp32 快照，进程级、不管前台）。
+一旦游戏进程消失，立刻收起全部 HUD，**包括不是它自己拉起的**（避免留下孤儿透明窗口）。
+检测失败时按"游戏还在"处理——宁可不关，也不误关。
+The daemon also checks whether `aces.exe` is still alive (Toolhelp32 snapshot, process-level).
+If the game is gone it clears every HUD, **including ones it did not spawn**.
+On detection failure it assumes the game is running — never close by mistake.
 
 ---
 
