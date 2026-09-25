@@ -100,18 +100,52 @@ MODE_GROUND = "ground"   # 陆战（海战也归到这里，用同一个 HUD）
 MODE_UNKNOWN = "unknown" # 认不出载具类型 → 保持当前 HUD，不乱切
 
 
-def game_running():
+def game_running(indicators=None):
     """
-    游戏进程是否存在（不管在前台还是后台）。
+    游戏是否还在（不管前台后台）。
 
-    用途：游戏退了就把 HUD 收掉，避免留下一个孤零零的透明窗口。
-    检测失败时返回 True —— 宁可不关，也不能误关。
+    判据「或」关系，任一为真就算在：
+      1) 进程表里能枚举到 aces.exe
+      2) 8111 遥测有响应（只有游戏在跑才会有）
+
+    ⚠ 以前只看进程表：守护跑在受限上下文（进程表对这个进程不完整）时会
+      恒定返回 False → 守护一遍遍判定"游戏已退"并杀掉刚拉起的 HUD，
+      表现为「HUD 起不来 / 秒退」（2026-09-25 实测）。8111 是绕开进程表的
+      独立证据，作为兜底。检测整体失败时返回 True —— 宁可不关，也不能误关。
     """
     try:
         from wt_foreground import is_war_thunder_running
-        return is_war_thunder_running()
+        if is_war_thunder_running():
+            return True
     except Exception:
+        return True          # 检测挂了就当游戏还在
+    return bool(indicators)
+
+
+def acquire_daemon_lock():
+    """
+    单实例保护：已经有一个活着的守护时就不要再来一个。
+
+    ⚠ 踩过的坑：两个守护同时跑，其中一个进程表受限 → 它持续判定
+      "游戏未运行" → 调用 kill_stray_huds() 把另一个守护刚拉起的 HUD
+      反复杀掉，表面症状就是「点启动也没用」。
+    """
+    try:
+        from wt_foreground import pid_alive
+    except Exception:              # 验活不可用就保守点，直接接手
+        write_pid(PID_DAEMON, os.getpid())
         return True
+    try:
+        with open(PID_DAEMON, "r", encoding="utf-8") as f:
+            old = int(f.read().strip())
+    except Exception:
+        old = None
+    if old and old != os.getpid() and pid_alive(old):
+        print(f"  已有守护在运行 (PID {old})，本次不再启动第二个，避免互相掐 HUD",
+              flush=True)
+        return False
+    write_pid(PID_DAEMON, os.getpid())
+    return True
 
 
 def _hidden_run(args, timeout=15, encoding="utf-8"):
@@ -256,7 +290,9 @@ def run_watch():
     print("", flush=True)
 
     # 登记守护自己的 PID，GUI 靠它判断自动模式是否在跑
-    write_pid(PID_DAEMON, os.getpid())
+    my_pid = os.getpid()
+    if not acquire_daemon_lock():
+        return
 
     proc_holder = {}  # script_path -> Popen or None
     current_mode = None
@@ -291,8 +327,13 @@ def run_watch():
     try:
         while True:
             ind = check_8111()
-            # 游戏进程没了就强制收起 HUD（不等 8111 超时）
-            if not game_running():
+            # 单实例：pid 文件被别的守护接管了 → 本实例安静退出，不跟它抢
+            owner = read_pid(PID_DAEMON)
+            if owner and owner != my_pid:
+                print(f"  检测到另一个守护 (PID {owner})，本实例退出", flush=True)
+                break
+            # 进程表 + 8111 双证据：任一有效即认为游戏还在，避免误杀 HUD
+            if not game_running(ind):
                 mode, desc = MODE_NONE, "游戏进程未运行，已收起 HUD"
             else:
                 mode, desc = detect_mode(ind)
