@@ -21,6 +21,7 @@ from PyQt5.QtCore import Qt, QTimer, QRect, QPointF
 from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap
 
 from wt_common import (is_enemy_color, is_friend_color, norm180,
+                       bearing_compass, heading_compass,
                        TargetManager, layout_arrows)
 from wt_foreground import is_war_thunder_foreground
 
@@ -152,23 +153,25 @@ class DataThread(threading.Thread):
                 # 计算距离方位
                 if player:
                     px, py = player["x"], player["y"]
-                    # 玩家朝向（地图方向向量 dx/dy → 航向角，0=东 90=南）
+                    # 玩家朝向：地图方向向量 → 罗盘航向（0=北，顺时针）。
+                    # 8111 地图坐标 +y=南，atan2(dy,dx) 是 0=东/90=南 的地图角，
+                    # 不能直接当罗盘角用（2026-09-25 修，换算统一在 wt_common）
                     p_dx, p_dy = player.get("dx", 0), player.get("dy", 0)
                     if p_dx != 0 or p_dy != 0:
-                        player["heading"] = (math.degrees(math.atan2(p_dy, p_dx)) + 360) % 360
+                        player["heading"] = heading_compass(p_dx, p_dy)
                     else:
                         player["heading"] = 0
                     for e in enemies:
                         dx_m = (e["x"] - px) * span
                         dy_m = (e["y"] - py) * span
                         e["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                        e["bearing"] = math.degrees(math.atan2(dy_m, dx_m))
+                        e["bearing"] = bearing_compass(dx_m, dy_m)
                     enemies.sort(key=lambda x: x.get("dist", 9999))
                     for a in allies:
                         dx_m = (a["x"] - px) * span
                         dy_m = (a["y"] - py) * span
                         a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                        a["bearing"] = math.degrees(math.atan2(dy_m, dx_m))
+                        a["bearing"] = bearing_compass(dx_m, dy_m)
 
                     # ---- 目标聚类去重：一个逻辑目标只产生一个箭头 ----
                     # 8111 会把一个防空阵地拆成多条记录（坐标只差几米），
@@ -185,9 +188,10 @@ class DataThread(threading.Thread):
                     targets = self.target_mgr.update(units)
                     p_heading = player.get("heading", 0)
                     for t in targets:
-                        # 陆战使用数学角（0=东，逆时针为正 → 左侧为正）
-                        # 统一转换为屏幕约定（0=正前，右侧为正）→ 取负
-                        t.rel_bearing = -norm180(t.bearing - p_heading)
+                        # bearing 与 p_heading 已统一为罗盘角（0=北，顺时针），
+                        # 直接相减即得相对方位（0=正前，右侧为正）。
+                        # ⚠ 旧版在这里多取了一次负号 → 左右镜像（2026-09-25 修）
+                        t.rel_bearing = norm180(t.bearing - p_heading)
                         t.rel_dist = t.dist
                     player["heading_smoothed"] = p_heading
 
@@ -533,10 +537,9 @@ class HudOverlay(QWidget):
                     name += "(空)"
                 if e.get("count", 1) > 1:
                     name += f"x{e['count']}"
-                # 方位：陆战 bearing 是数学角（0=东，逆时针为正）
-                # 故 45°=东北、90°=北、135°=西北
+                # 方位：bearing 已统一为罗盘角（0=北，顺时针）→ 标准罗盘方位
                 b = e.get("bearing", 0)
-                dirs = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
+                dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
                 idx = int((b + 360 + 22.5) / 45) % 8
                 dir_str = dirs[idx]
 
@@ -651,8 +654,9 @@ class HudOverlay(QWidget):
         for e in data.get("enemies", [])[:8]:
             dist = min(e.get("dist", 0), max_d)
             bearing = math.radians(e.get("bearing", 0))
-            px = int(cx + dist / max_d * r * math.cos(bearing))
-            py = int(cy + dist / max_d * r * math.sin(bearing))
+            # bearing 为罗盘角：0=上(N)、90=右(E) —— 罗盘盘面映射
+            px = int(cx + dist / max_d * r * math.sin(bearing))
+            py = int(cy - dist / max_d * r * math.cos(bearing))
             if e["kind"] == "air":
                 p.setBrush(self.ORANGE)
                 p.setPen(Qt.NoPen)
@@ -672,8 +676,8 @@ class HudOverlay(QWidget):
         for a in data.get("allies", [])[:6]:
             dist = min(a.get("dist", 0), max_d)
             bearing = math.radians(a.get("bearing", 0))
-            px = int(cx + dist / max_d * r * math.cos(bearing))
-            py = int(cy + dist / max_d * r * math.sin(bearing))
+            px = int(cx + dist / max_d * r * math.sin(bearing))
+            py = int(cy - dist / max_d * r * math.cos(bearing))
             p.setBrush(self.BLUE)
             p.setPen(Qt.NoPen)
             p.drawEllipse(px, py, 4, 4)

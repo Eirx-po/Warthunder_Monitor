@@ -19,6 +19,7 @@ from collections import deque
 # 允许直接运行本文件时也能 import 上级目录的共享模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wt_common import (is_enemy_color, is_friend_color, norm180,
+                       bearing_compass, heading_compass,
                        TargetManager)
 
 BASE = "http://localhost:8111"
@@ -61,6 +62,9 @@ class Track:
         self.y = y
         self.heading = heading
         self.speed_kmh = 0
+        # 归一化坐标 1.0 对应的米数（map_max-map_min）。由 TrackManager 每帧同步，
+        # 空战大地图是 65536，写死 4096 会差 16 倍（2026-09-25 修）
+        self.map_span = 4096.0
         self.history = deque(maxlen=20)  # (ts, x, y)
         self.last_update = ts if ts else time.time()
         self.lost = False
@@ -79,7 +83,8 @@ class Track:
                 if abs(x) > 1.0:
                     dist = haversine(x0, y0, x, y)
                 else:
-                    dist = math.sqrt((x - x0)**2 * 4096**2 + (y - y0)**2 * 4096**2)
+                    dist = math.sqrt((x - x0)**2 * self.map_span**2
+                                     + (y - y0)**2 * self.map_span**2)
                 self.speed_kmh = (dist / dt) * 3.6
         self.x, self.y, self.heading = x, y, heading
         self.last_update = now
@@ -107,8 +112,13 @@ class Track:
             return self.x + d_lat, self.y + d_lon
         else:
             # Normalized coords
-            return (self.x + dist_m * math.cos(brg) / 4096,
-                    self.y + dist_m * math.sin(brg) / 4096)
+            # heading 是罗盘角（0=北，顺时针），地图坐标 +y=南：
+            # 东向分量 = dist*sin(brg)，南向分量 = -dist*cos(brg)。
+            # （旧版把罗盘角直接当 atan2(dy,dx) 用 → 预测点方向错 90°）
+            dx_m = dist_m * math.sin(brg)
+            dy_m = -dist_m * math.cos(brg)
+            return (self.x + dx_m / self.map_span,
+                    self.y + dy_m / self.map_span)
 
     def age(self, ts=None):
         now = ts if ts else time.time()
@@ -124,6 +134,8 @@ class TrackManager:
         self.lost_timeout = lost_timeout_s
         self.max_lost_age = max_lost_age_s
         self._next_id = 1
+        # 归一化坐标对应的真实米数，由 AirDataFetcher 每帧同步
+        self.map_span = 4096.0
 
     def update(self, units):
         """
@@ -151,6 +163,7 @@ class TrackManager:
 
             if best_id is not None:
                 t = self.tracks[best_id]
+                t.map_span = self.map_span
                 t.update(u["x"], u["y"], u.get("heading", t.heading), now)
                 t.icon = u["icon"]  # update type
                 matched.add(best_id)
@@ -160,6 +173,7 @@ class TrackManager:
                 self._next_id += 1
                 t = Track(tid, u["icon"], u["color"], u["x"], u["y"],
                           u.get("heading", 0), now)
+                t.map_span = self.map_span
                 self.tracks[tid] = t
                 matched.add(tid)
 
@@ -561,11 +575,13 @@ class AirDataFetcher(threading.Thread):
                     dx_m = (e["x"] - px) * span
                     dy_m = (e["y"] - py) * span
                     e["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                    e["bearing"] = (math.degrees(math.atan2(dy_m, dx_m)) + 360) % 360
+                    # 8111 地图坐标 +y=南，必须转成罗盘角（0=北，顺时针）；
+                    # 直接 atan2(dy,dx) 会整体偏 90°（2026-09-25 修）
+                    e["bearing"] = bearing_compass(dx_m, dy_m)
 
                 # Heading from dx/dy (aircraft direction vector)
                 if e["dx"] != 0 or e["dy"] != 0:
-                    e["heading"] = (math.degrees(math.atan2(e["dy"], e["dx"])) + 360) % 360
+                    e["heading"] = heading_compass(e["dx"], e["dy"])
                 else:
                     e["heading"] = 0
 
@@ -604,8 +620,8 @@ class AirDataFetcher(threading.Thread):
             # 玩家罗盘朝向（用于把绝对方位换算成相对方位）
             p_hdg = flight.get("compass", 0) if flight else 0
             for t in targets:
-                # 空战 bearing 是罗盘角（0=北，顺时针），与屏幕约定一致
-                # （0=正前，右侧为正），故直接相减
+                # bearing 与 p_hdg 已统一为罗盘角（0=北，顺时针），
+                # 直接相减即得相对方位（0=正前，右侧为正）
                 t.rel_bearing = norm180(t.bearing - p_hdg)
                 # 进入角：目标朝向相对"我→目标"方位，0=正对着我冲过来
                 t.aspect = norm180(t.heading - t.bearing)
@@ -634,7 +650,7 @@ class AirDataFetcher(threading.Thread):
                     dx_m = (a["x"] - px) * span
                     dy_m = (a["y"] - py) * span
                     a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                    a["bearing"] = (math.degrees(math.atan2(dy_m, dx_m)) + 360) % 360
+                    a["bearing"] = bearing_compass(dx_m, dy_m)
 
         data["player"] = player
         data["enemies"] = enemies
@@ -660,6 +676,9 @@ class AirDataFetcher(threading.Thread):
                 "icon": a["icon"], "color": a["color"],
                 "is_enemy": False,
             })
+
+        # 真实地图跨度同步给轨迹管理器（测速/预测外推用，空战图 65536）
+        self.track_manager.map_span = self._map_span(data.get("map_info", {}))
 
         alive_tracks, lost_tracks = self.track_manager.update(track_units)
 
@@ -698,7 +717,7 @@ class AirDataFetcher(threading.Thread):
                     dx_m = (t.x - px) * span
                     dy_m = (t.y - py) * span
                     t.dist = math.sqrt(dx_m**2 + dy_m**2)
-                    t.bearing = (math.degrees(math.atan2(dy_m, dx_m)) + 360) % 360
+                    t.bearing = bearing_compass(dx_m, dy_m)
                 t.aspect = angle_diff(t.heading, t.bearing)
                 t.icon_short = t.icon
 
@@ -719,7 +738,7 @@ class AirDataFetcher(threading.Thread):
                     dx_m = (px_pred - px) * span
                     dy_m = (py_pred - py) * span
                     t.pred_dist = math.sqrt(dx_m**2 + dy_m**2)
-                    t.pred_bearing = (math.degrees(math.atan2(dy_m, dx_m)) + 360) % 360
+                    t.pred_bearing = bearing_compass(dx_m, dy_m)
                 t.icon_short = t.icon
 
         data["tracks_alive"] = alive_tracks
