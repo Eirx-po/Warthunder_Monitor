@@ -9,8 +9,10 @@ echo   Ctrl+C to exit
 echo.
 echo Starting...
 echo.
-REM 用 pythonw.exe：守护模式后台静默运行，不弹控制台窗口。
-REM 运行状态写在 wt_hud_*.log 里。
+REM Run with pythonw.exe: daemon mode stays in background, no console window.
+REM Runtime status is written to wt_hud_*.log
+REM NOTE: this file must stay pure ASCII -- cmd.exe reads .bat with the
+REM system ANSI codepage, so UTF-8 Chinese text gets parsed as commands.
 "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\pythonw.exe" "J:\Quant\wt_hud_launcher.py" --watch
 echo.
 pause
