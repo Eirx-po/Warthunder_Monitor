@@ -309,10 +309,10 @@ class HudOverlay(QWidget):
 
         data = self.data_thread.get_data()
 
-        # 左上：战场态势
-        self.draw_threat_panel(p, 15, 15, data)
-        # 右上：载具状态
-        self.draw_vehicle_panel(p, self.sw - 255, 15, data)
+        # 左上：载具状态（ENGINE / CLIMB）
+        self.draw_vehicle_panel(p, 15, 15, data)
+        # 右下：战场态势（TARGET）
+        self.draw_threat_panel(p, self.sw - 255, self.sh - 175, data)
         # 底部中央：警报条
         self.draw_alert_bar(p, data)
         # 屏幕边缘：敌人方向指示箭头
