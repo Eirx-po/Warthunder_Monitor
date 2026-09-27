@@ -42,6 +42,9 @@ CREATE_NO_WINDOW = 0x08000000
 PID_DAEMON = os.path.join(BASE_DIR, ".wt_daemon.pid")
 PID_AIR = os.path.join(BASE_DIR, ".wt_hud_air.pid")
 PID_GROUND = os.path.join(BASE_DIR, ".wt_hud_ground.pid")
+# 守护心跳：守护每轮写一个时间戳。用来区分"真守护"和"只是占着这个 PID 的无关进程"
+HEARTBEAT = os.path.join(BASE_DIR, ".wt_daemon.heartbeat")
+DAEMON_HB_TIMEOUT = 15.0    # 秒：超过这么久没心跳就当守护已死/卡住
 
 
 def write_pid(path, pid):
@@ -78,6 +81,42 @@ def clear_pid(path):
         os.remove(path)
     except Exception:
         pass
+
+
+def write_heartbeat():
+    """守护每轮调用一次，证明"我还活着且在循环" """
+    try:
+        with open(HEARTBEAT, "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
+
+def read_heartbeat():
+    try:
+        with open(HEARTBEAT, "r", encoding="utf-8") as f:
+            return float(f.read().strip())
+    except Exception:
+        return None
+
+
+def daemon_alive():
+    """
+    真有一个活着的守护在跑吗？—— 必须同时满足 PID 活着 **且** 心跳新鲜。
+
+    ⚠ 只看 pid_alive 不够：PID 会被系统回收给别的进程。2026-09-27 实测
+      .wt_daemon.pid 指向的 24920 其实是无关的 python.exe，于是
+      - 新守护以为"已有一个" → 拒绝启动
+      - 真守护看到 owner 不是自己 → 立刻退出
+      两边互锁，表面症状就是「HUD 永远起不来」。
+    """
+    pid = read_pid(PID_DAEMON)
+    if not pid:
+        return False
+    hb = read_heartbeat()
+    if hb is None:
+        return False
+    return (time.time() - hb) < DAEMON_HB_TIMEOUT
 
 
 def hud_pids():
@@ -126,25 +165,20 @@ def acquire_daemon_lock():
     """
     单实例保护：已经有一个活着的守护时就不要再来一个。
 
-    ⚠ 踩过的坑：两个守护同时跑，其中一个进程表受限 → 它持续判定
+    ⚠ 踩过的坑一：两个守护同时跑，其中一个进程表受限 → 它持续判定
       "游戏未运行" → 调用 kill_stray_huds() 把另一个守护刚拉起的 HUD
       反复杀掉，表面症状就是「点启动也没用」。
+    ⚠ 踩过的坑二：只验 pid_alive 会被"PID 复用"骗到（2026-09-27）——
+      陈旧 PID 指向无关进程时，新守护不敢启动、旧守护又因为 owner 不是自己
+      而退出，两边互锁。所以这里以心跳新鲜为准。
     """
-    try:
-        from wt_foreground import pid_alive
-    except Exception:              # 验活不可用就保守点，直接接手
-        write_pid(PID_DAEMON, os.getpid())
-        return True
-    try:
-        with open(PID_DAEMON, "r", encoding="utf-8") as f:
-            old = int(f.read().strip())
-    except Exception:
-        old = None
-    if old and old != os.getpid() and pid_alive(old):
+    if daemon_alive():
+        old = read_pid(PID_DAEMON)
         print(f"  已有守护在运行 (PID {old})，本次不再启动第二个，避免互相掐 HUD",
               flush=True)
         return False
     write_pid(PID_DAEMON, os.getpid())
+    write_heartbeat()
     return True
 
 
@@ -327,11 +361,16 @@ def run_watch():
     try:
         while True:
             ind = check_8111()
-            # 单实例：pid 文件被别的守护接管了 → 本实例安静退出，不跟它抢
+            # 心跳：证明本轮还活着（下一个守护/启动器都靠它分辨真假守护）
+            write_heartbeat()
+            # 单实例：pid 文件被**另一个活着的守护**接管 → 本实例安静退出，不跟它抢
             owner = read_pid(PID_DAEMON)
-            if owner and owner != my_pid:
-                print(f"  检测到另一个守护 (PID {owner})，本实例退出", flush=True)
-                break
+            if owner != my_pid:
+                if daemon_alive():
+                    print(f"  检测到另一个守护 (PID {owner})，本实例退出", flush=True)
+                    break
+                # 陈旧 PID（进程已死，或这个号被无关进程复用了）→ 重新接管
+                write_pid(PID_DAEMON, my_pid)
             # 进程表 + 8111 双证据：任一有效即认为游戏还在，避免误杀 HUD
             if not game_running(ind):
                 mode, desc = MODE_NONE, "游戏进程未运行，已收起 HUD"
@@ -380,6 +419,7 @@ def run_watch():
         stop_hud(AIR_HUD, proc_holder)
         stop_hud(GROUND_HUD, proc_holder)
         clear_pid(PID_DAEMON)
+        clear_pid(HEARTBEAT)
 
 
 def main():

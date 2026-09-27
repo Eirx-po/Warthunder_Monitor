@@ -158,8 +158,10 @@ def hud_pids_scan():
 
 
 def daemon_pids():
-    """当前活着的守护进程 PID（读 PID 文件）"""
-    from wt_hud_launcher import read_pid, PID_DAEMON
+    """当前活着的守护进程 PID —— 要求心跳新鲜，避免陈旧 PID 让启动器误判"已在运行" """
+    from wt_hud_launcher import read_pid, PID_DAEMON, daemon_alive
+    if not daemon_alive():
+        return []
     pid = read_pid(PID_DAEMON)
     return [pid] if pid else []
 
