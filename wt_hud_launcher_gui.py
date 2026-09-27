@@ -53,6 +53,7 @@ GROUND_HUD = _resolve("wt_hud_v2.py")
 LAYOUT_JSON = _resolve("wt_air_hud", "hud_layout.json")
 POWER_CURVE = _resolve("wt_power_curve.py")
 DAEMON = _resolve("wt_hud_launcher.py")   # 守护模式：按载具自动切换空战/陆战
+DAEMON_LOG = os.path.join(HERE, "wt_daemon.log")
 
 PYTHON = (r"C:\Users\Administrator\.workbuddy\binaries\python"
           r"\versions\3.13.12\python.exe")
@@ -437,9 +438,17 @@ class Launcher(QMainWindow):
             return
         try:
             flags = _spawn_flags()
+            # ⚠ 必须重定向 stdout：GUI 是 pythonw（没有控制台），不重定向的话
+            #   守护的 print 会全部丢失 —— 出问题时日志一片空白、无从查起
+            #   （2026-09-27 就因为 wt_daemon.log 停在 9-22 白白多查很久）
+            try:
+                logf = open(DAEMON_LOG, "a", encoding="utf-8", errors="replace")
+            except Exception:
+                logf = subprocess.DEVNULL
             self.auto_proc = subprocess.Popen(
                 [PYTHON, "-u", DAEMON, "--watch"], cwd=os.path.dirname(DAEMON),
-                env=self.build_env(), creationflags=flags)
+                env=self.build_env(), creationflags=flags,
+                stdout=logf, stderr=subprocess.STDOUT)
             self.say(f"自动切换已开启 (PID {self.auto_proc.pid}) — "
                      f"进战斗后按载具自动选空战/陆战 HUD")
         except Exception as e:
