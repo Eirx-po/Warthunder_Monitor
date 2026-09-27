@@ -267,11 +267,36 @@ class Launcher(QMainWindow):
         self.sp_dy.setRange(-1200, 1200)
         self.sp_dy.setSuffix(" px")
 
+        # TARGET 绝对坐标（可选）：勾上后忽略角落代号，直接按像素定位
+        self.chk_abs = QCheckBox("TARGET 用绝对坐标（忽略上面的角落）")
+        self.chk_abs.setFont(QFont("Consolas", 9))
+        self.sp_tx = QSpinBox()
+        self.sp_tx.setRange(-2000, 8000)
+        self.sp_tx.setSuffix(" px")
+        self.sp_ty = QSpinBox()
+        self.sp_ty.setRange(-2000, 8000)
+        self.sp_ty.setSuffix(" px")
+        self.sp_tx.setEnabled(False)
+        self.sp_ty.setEnabled(False)
+        self.chk_abs.toggled.connect(self._on_abs_toggled)
+
+        # TARGET 单独缩放：覆盖"整体缩放"，只缩放这一个面板（尺寸+字号一起变）
+        self.sp_tscale = QDoubleSpinBox()
+        self.sp_tscale.setRange(0.5, 3.0)
+        self.sp_tscale.setSingleStep(0.1)
+        self.sp_tscale.setDecimals(1)
+        self.sp_tscale.setValue(1.0)
+        self.sp_tscale.setSuffix(" 倍")
+
         f3.addRow("飞行/爬升面板:", self.cmb_flight)
         f3.addRow("目标 TARGET:", self.cmb_target)
         f3.addRow("战斗 COMBAT:", self.cmb_combat)
         f3.addRow("TARGET 左右偏移:", self.sp_dx)
         f3.addRow("TARGET 上下偏移:", self.sp_dy)
+        f3.addRow("", self.chk_abs)
+        f3.addRow("TARGET 绝对 X:", self.sp_tx)
+        f3.addRow("TARGET 绝对 Y:", self.sp_ty)
+        f3.addRow("TARGET 单独缩放:", self.sp_tscale)
 
         # 缩放：一处生效即面板尺寸+字号+内部间距一起变
         self.sp_scale = QDoubleSpinBox()
@@ -470,6 +495,11 @@ class Launcher(QMainWindow):
         self.start_auto()
 
     # ---- 布局读写 ----
+    def _on_abs_toggled(self, on):
+        """只有勾了"用绝对坐标"才启用 X/Y 输入框"""
+        self.sp_tx.setEnabled(on)
+        self.sp_ty.setEnabled(on)
+
     def load_layout_ui(self):
         """从 hud_layout.json 读入当前值，填进窗口控件"""
         try:
@@ -496,6 +526,26 @@ class Launcher(QMainWindow):
             if isinstance(f, str) and f.strip():
                 self.cmb_font.setCurrentText(f.strip())
 
+        # TARGET 绝对坐标（pos）
+        pcfg = cfg.get("pos") if isinstance(cfg.get("pos"), dict) else {}
+        tp = pcfg.get("target") if isinstance(pcfg, dict) else None
+        if isinstance(tp, list) and len(tp) >= 2:
+            self.chk_abs.setChecked(True)
+            self.sp_tx.setValue(int(tp[0]))
+            self.sp_ty.setValue(int(tp[1]))
+        else:
+            self.chk_abs.setChecked(False)
+            self.sp_tx.setValue(0)
+            self.sp_ty.setValue(0)
+        self._on_abs_toggled(self.chk_abs.isChecked())
+
+        # TARGET 单独缩放（panel_scale）
+        psc = cfg.get("panel_scale") if isinstance(cfg.get("panel_scale"), dict) else {}
+        try:
+            self.sp_tscale.setValue(float(psc.get("target", 1.0)))
+        except Exception:
+            self.sp_tscale.setValue(1.0)
+
     def save_layout(self):
         """把窗口里的设置写回 hud_layout.json"""
         try:
@@ -513,14 +563,31 @@ class Launcher(QMainWindow):
         cfg["ui"] = {"scale": round(self.sp_scale.value(), 2),
                      "font": self.cmb_font.currentText().strip() or "Consolas"}
 
+        # TARGET 绝对坐标：勾上才写，取消勾选要把 target 从 pos 里摘掉
+        pcfg = cfg.get("pos") if isinstance(cfg.get("pos"), dict) else {}
+        if self.chk_abs.isChecked():
+            pcfg["target"] = [self.sp_tx.value(), self.sp_ty.value()]
+        else:
+            pcfg.pop("target", None)
+        cfg["pos"] = pcfg
+
+        # TARGET 单独缩放
+        psc = cfg.get("panel_scale") if isinstance(cfg.get("panel_scale"), dict) else {}
+        psc["target"] = round(self.sp_tscale.value(), 2)
+        cfg["panel_scale"] = psc
+
         try:
             with open(LAYOUT_JSON, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
+            extra = f" TARGET缩放={psc['target']}倍"
+            if self.chk_abs.isChecked():
+                extra += (f" TARGET绝对坐标="
+                          f"({self.sp_tx.value()},{self.sp_ty.value()})")
             self.say(f"已保存: flight={cfg['flight']} "
                      f"target={cfg['target']} "
                      f"偏移=({self.sp_dx.value()},{self.sp_dy.value()}) "
-                     f"缩放={cfg['ui']['scale']}倍 字体={cfg['ui']['font']} "
-                     f"— 点『应用并重启』生效")
+                     f"缩放={cfg['ui']['scale']}倍 字体={cfg['ui']['font']}"
+                     f"{extra} — 点『应用并重启』生效")
         except Exception as e:
             self.say(f"保存失败: {e}")
 

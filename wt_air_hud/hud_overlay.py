@@ -75,7 +75,7 @@ class AirHudOverlay(QWidget):
         self.fg_timer.timeout.connect(self._check_foreground)
         self.fg_timer.start(400)
 
-        self.layout, self.offsets, self.ui = self._load_layout()
+        self.layout, self.offsets, self.ui, self.poses, self.pscales = self._load_layout()
         self.FONT_NAME = self.ui.get("font", "Consolas")
 
         # For flicker-free radar trail
@@ -84,15 +84,19 @@ class AirHudOverlay(QWidget):
     @staticmethod
     def _load_layout():
         """
-        读取面板位置配置，返回 (角落配置, 偏移配置)。
+        读取面板位置配置，返回 (角落, 偏移, UI, 绝对坐标, 单面板缩放)。
 
         优先级：环境变量 > hud_layout.json > 默认值。
         角落代号：TL 左上 / TR 右上 / BL 左下 / BR 右下 / OFF 不显示。
         偏移：{"面板名": [dx, dy]}，负 dx = 左移，负 dy = 上移。
+        pos：{"面板名": [x, y]} 绝对坐标（屏幕左上角原点），给了就无视角落代号。
+        panel_scale：{"面板名": 1.3} 单面板缩放，覆盖 ui.scale。
         """
         layout = dict(AirHudOverlay.DEFAULT_LAYOUT)
         offsets = dict(AirHudOverlay.DEFAULT_OFFSETS)
         ui = dict(AirHudOverlay.DEFAULT_UI)
+        poses = dict(AirHudOverlay.DEFAULT_POSES)
+        pscales = dict(AirHudOverlay.DEFAULT_PANEL_SCALES)
 
         try:
             cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -117,6 +121,18 @@ class AirHudOverlay(QWidget):
                             for pk, pv in v.items():
                                 if (isinstance(pv, list) and len(pv) >= 2):
                                     offsets[pk] = (int(pv[0]), int(pv[1]))
+                        elif k == "pos" and isinstance(v, dict):
+                            # {"pos": {"target": [1200, 700]}} 绝对坐标，屏幕左上角为原点
+                            for pk, pv in v.items():
+                                if (isinstance(pv, list) and len(pv) >= 2):
+                                    poses[pk] = (int(pv[0]), int(pv[1]))
+                        elif k == "panel_scale" and isinstance(v, dict):
+                            # {"panel_scale": {"target": 1.3}} 单面板缩放，覆盖 ui.scale
+                            for pk, pv in v.items():
+                                try:
+                                    pscales[pk] = max(0.5, min(3.0, float(pv)))
+                                except Exception:
+                                    pass
                         elif k in layout and isinstance(v, str):
                             layout[k] = v.strip().upper()
         except Exception:
@@ -140,7 +156,7 @@ class AirHudOverlay(QWidget):
         f = os.environ.get("WT_HUD_FONT", "").strip()
         if f:
             ui["font"] = f
-        return layout, offsets, ui
+        return layout, offsets, ui, poses, pscales
 
     def reset_stack(self):
         """每帧开始清空堆叠记录（面板在同一角落时依次排开）"""
@@ -157,6 +173,12 @@ class AirHudOverlay(QWidget):
         注意：偏移必须用「之前所有面板的累计高度」，
         不能用 n*h（各面板高度不同，那样会互相重叠）。
         """
+        # 绝对坐标优先：给了 pos 就直接定位，忽略角落代号与同角落堆叠
+        if key in self.poses:
+            ax, ay = self.poses[key]
+            dx, dy = self.offsets.get(key, (0, 0))
+            return (int(ax + dx), int(ay + dy))
+
         pos = (self.layout.get(key) or "OFF").upper()
         if pos not in ("TL", "TR", "BL", "BR"):
             return None
@@ -279,10 +301,12 @@ class AirHudOverlay(QWidget):
         s = float(self.ui.get("scale", 1.0))
 
         for key, fn, w, h in specs:
-            pos = self.panel_pos(key, w * s, h * s)
+            # 单面板缩放覆盖全局缩放：只影响该面板（尺寸+字号一起变）
+            ps = float(self.pscales.get(key, s))
+            pos = self.panel_pos(key, w * ps, h * ps)
             if pos is None:
                 continue
-            panels.append((fn, (p, pos[0], pos[1], data, s)))
+            panels.append((fn, (p, pos[0], pos[1], data, ps)))
 
         panels.append((self._draw_alert_bar, (p, data)))
         panels.append((self._draw_edge_arrows, (p, data)))
@@ -340,6 +364,11 @@ class AirHudOverlay(QWidget):
     }
     # 面板微调偏移：{"面板名": (dx, dy)}，负 dx = 左移、负 dy = 上移
     DEFAULT_OFFSETS = {}
+    # 绝对坐标：{"面板名": (x, y)} —— 屏幕左上角为原点；给了就无视角落代号与堆叠
+    DEFAULT_POSES = {}
+    # 单面板缩放：{"面板名": 1.3} —— 覆盖 ui.scale，只缩放该面板（尺寸+字号一起变）。
+    # 面板宽度在绘制函数里写死（只传 x,y 不传宽高），所以放大必须走 QPainter 缩放变换。
+    DEFAULT_PANEL_SCALES = {}
     PANEL_MARGIN = 15
 
     # UI 缩放与字体（可在启动器窗口里调，存 hud_layout.json 的 "ui"）
