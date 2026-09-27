@@ -388,11 +388,12 @@ class Launcher(QMainWindow):
         # 自动切换也一并关掉：否则守护进程会立刻把 HUD 又拉起来，
         # 用户点了"停止 HUD"却看到它自己复活，很困惑
         self.stop_auto(silent=True)
-        # 再清理残留：这里是一次性操作，可以用进程扫描捞没登记 PID 文件的旧 HUD
-        for pid in hud_pids_scan():
+        # 再清理残留：PID 文件是主路径（最可靠），进程扫描捞没登记 PID 文件的旧 HUD
+        pids = set(hud_pids()) | set(hud_pids_scan())
+        for pid in pids:
             _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
         if not silent:
-            self.say("已停止 HUD")
+            self.say("已停止 HUD" if pids else "没有运行中的 HUD")
 
     def start_auto(self):
         """启动守护进程：按载具自动选空战/陆战 HUD（GUI 唯一的启动方式）"""
@@ -428,7 +429,7 @@ class Launcher(QMainWindow):
         for pid in daemon_pids() or daemon_pids_scan():
             _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
         # 顺带收掉守护拉起的 HUD：否则关了自动切换，屏幕上还留着一个 HUD，很莫名
-        for pid in hud_pids_scan():
+        for pid in set(hud_pids()) | set(hud_pids_scan()):
             _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
         if not silent:
             self.say("已关闭自动切换")
