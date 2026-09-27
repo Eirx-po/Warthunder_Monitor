@@ -20,4 +20,4 @@ power_curve_*.csv
 *.tmp
 
 # PID 登记文件（运行时生成）/ runtime pid files
-.wt_*.pid
+.wt_*
