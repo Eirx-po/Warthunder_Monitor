@@ -22,6 +22,17 @@ import sys
 import time
 import urllib.request
 
+# ⚠ 守护是由启动器(pythonw)拉起的，stdout 被重定向到 wt_daemon.log 文件。
+#   此时 Python 按系统 locale(GBK) 编码输出，遇到 ✅ 这类字符会抛
+#   UnicodeEncodeError 直接把守护崩掉 —— 2026-09-30 实测：拉起 HUD 后 print 一个
+#   ✅ 就让守护退出，表现就是「HUD 再也不自动切换空/陆」。
+#   统一改成 utf-8 + replace：任何字符都只会被替换，绝不会写崩。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 BASE = "http://localhost:8111"
 PYTHON = r"C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -292,7 +303,7 @@ def launch_hud(script_path, label, proc_holder):
     # 登记 PID 文件：GUI 靠它判断 HUD 是否在跑，不用去扫进程
     write_pid(PID_AIR if script_path == AIR_HUD else PID_GROUND, proc.pid)
     time.sleep(0.8)
-    print(f"  [{label}] 已启动 (PID {proc.pid})，日志: {os.path.basename(log_path)} ✅",
+    print(f"  [{label}] 已启动 (PID {proc.pid})，日志: {os.path.basename(log_path)} [OK]",
           flush=True)
     return proc
 
@@ -401,9 +412,15 @@ def run_watch():
                         print(f"  模式切换: {current_mode} -> {mode}", flush=True)
                     else:
                         print(f"  检测到模式: {mode} ({desc})", flush=True)
-                    current_mode = mode
-                    mode_confirm_count = 0
-                    ensure_hud(mode)
+                    try:
+                        ensure_hud(mode)
+                        current_mode = mode
+                        mode_confirm_count = 0
+                    except Exception as e:
+                        # ⚠ 启动失败绝不能让守护跟着死（那样就再也不自动切换了）。
+                        #   保持在旧模式 + 计数清零，下一轮确认后自动重试。
+                        print(f"  [守护] 切换 HUD 失败，稍后重试: {e}", flush=True)
+                        mode_confirm_count = 0
             else:
                 mode_confirm_count = 0
 
