@@ -50,7 +50,7 @@ def _resolve(*parts):
 
 AIR_HUD = _resolve("wt_air_hud", "hud_overlay.py")
 GROUND_HUD = _resolve("wt_hud_v2.py")
-LAYOUT_JSON = _resolve("wt_air_hud", "hud_layout.json")
+# 布局配置按"空战 / 陆战"拆成两个独立文件，路径由 self._layout_path() 决定（见下方）
 POWER_CURVE = _resolve("wt_power_curve.py")
 DAEMON = _resolve("wt_hud_launcher.py")   # 守护模式：按载具自动切换空战/陆战
 DAEMON_LOG = os.path.join(HERE, "wt_daemon.log")
@@ -251,55 +251,86 @@ class Launcher(QMainWindow):
         v.addWidget(g_opt)
 
         # ---- 布局设置（直接写在窗口里，不用开 json 文件）----
-        g_lay = QGroupBox("面板位置")
+        # 空战 / 陆战 两套独立配置，分别设置互不影响
+        self.layout_mode = "air"
+        # 屏幕可用分辨率：把"角落默认位置"换算成具体像素（面板约 255x175，边距 15）
+        try:
+            _geo = QApplication.primaryScreen().availableGeometry()
+            self._screen_w, self._screen_h = _geo.width(), _geo.height()
+        except Exception:
+            self._screen_w, self._screen_h = 1920, 1080
+
+        g_lay = QGroupBox("面板位置（空战 / 陆战 分别设置）")
         f3 = QFormLayout(g_lay)
         f3.setLabelAlignment(Qt.AlignRight)
 
-        CORNERS = ["TL", "TR", "BL", "BR", "OFF"]
-        self.cmb_flight = QComboBox()
-        self.cmb_flight.addItems(CORNERS)
-        self.cmb_target = QComboBox()
-        self.cmb_target.addItems(CORNERS)
-        self.cmb_combat = QComboBox()
-        self.cmb_combat.addItems(CORNERS)
+        # 模式切换：空战 / 陆战 各读各的布局文件
+        self.cmb_mode = QComboBox()
+        self.cmb_mode.addItems(["空战", "陆战"])
+        self.cmb_mode.setFont(QFont("Consolas", 9))
+        self.cmb_mode.setToolTip("空战与陆战使用各自独立的布局文件，分别设置互不影响")
+        self.cmb_mode.currentTextChanged.connect(self._on_mode_changed)
+        f3.addRow("设置模式:", self.cmb_mode)
 
-        self.sp_dx = QSpinBox()
-        self.sp_dx.setRange(-1200, 1200)
-        self.sp_dx.setSuffix(" px")
-        self.sp_dy = QSpinBox()
-        self.sp_dy.setRange(-1200, 1200)
-        self.sp_dy.setSuffix(" px")
+        def _xy_spin(tip_x, tip_y):
+            sx = QSpinBox(); sx.setRange(-2000, 8000); sx.setSuffix(" px")
+            sx.setToolTip(tip_x)
+            sy = QSpinBox(); sy.setRange(-2000, 8000); sy.setSuffix(" px")
+            sy.setToolTip(tip_y)
+            return sx, sy
 
-        # TARGET 绝对坐标（可选）：勾上后忽略角落代号，直接按像素定位
-        self.chk_abs = QCheckBox("TARGET 用绝对坐标（忽略上面的角落）")
-        self.chk_abs.setFont(QFont("Consolas", 9))
-        self.sp_tx = QSpinBox()
-        self.sp_tx.setRange(-2000, 8000)
-        self.sp_tx.setSuffix(" px")
-        self.sp_ty = QSpinBox()
-        self.sp_ty.setRange(-2000, 8000)
-        self.sp_ty.setSuffix(" px")
-        self.sp_tx.setEnabled(False)
-        self.sp_ty.setEnabled(False)
-        self.chk_abs.toggled.connect(self._on_abs_toggled)
+        def _scale_spin():
+            sp = QDoubleSpinBox(); sp.setRange(0.5, 3.0)
+            sp.setSingleStep(0.1); sp.setDecimals(1)
+            sp.setValue(1.0); sp.setSuffix(" 倍")
+            return sp
 
-        # TARGET 单独缩放：覆盖"整体缩放"，只缩放这一个面板（尺寸+字号一起变）
-        self.sp_tscale = QDoubleSpinBox()
-        self.sp_tscale.setRange(0.5, 3.0)
-        self.sp_tscale.setSingleStep(0.1)
-        self.sp_tscale.setDecimals(1)
-        self.sp_tscale.setValue(1.0)
-        self.sp_tscale.setSuffix(" 倍")
+        # 面板1 = flight（空战：飞行/爬升；陆战：载具状态）
+        # 面板2 = target（空战：目标 TARGET；陆战：战场态势 TARGET）
+        # 两种模式的面板集合相同、只是叫法不同，所以设置页共用，标签随模式切换。
+        # 定位只用「绝对坐标 X/Y」一种，与 TARGET 保持一致（不再有角落/偏移两套）。
+        self.sp_fx, self.sp_fy = _xy_spin(
+            "该面板左上角的屏幕 X（左上角为原点）",
+            "该面板左上角的屏幕 Y（左上角为原点）")
+        self.sp_tx, self.sp_ty = _xy_spin(
+            "TARGET 面板左上角的屏幕 X；右下角约 = 屏幕宽 - 270",
+            "TARGET 面板左上角的屏幕 Y；右下角约 = 屏幕高 - 190")
+        self.sp_fscale = _scale_spin()
+        self.sp_tscale = _scale_spin()
 
-        f3.addRow("飞行/爬升面板:", self.cmb_flight)
-        f3.addRow("目标 TARGET:", self.cmb_target)
-        f3.addRow("战斗 COMBAT:", self.cmb_combat)
-        f3.addRow("TARGET 左右偏移:", self.sp_dx)
-        f3.addRow("TARGET 上下偏移:", self.sp_dy)
-        f3.addRow("", self.chk_abs)
-        f3.addRow("TARGET 绝对 X:", self.sp_tx)
-        f3.addRow("TARGET 绝对 Y:", self.sp_ty)
-        f3.addRow("TARGET 单独缩放:", self.sp_tscale)
+        # 标签随模式变化（见 _update_mode_labels）
+        self.lbl_fx = QLabel("飞行/爬升面板 X:")
+        self.lbl_fy = QLabel("飞行/爬升面板 Y:")
+        self.lbl_fscale = QLabel("飞行/爬升面板缩放:")
+        self.lbl_tx = QLabel("目标 TARGET X:")
+        self.lbl_ty = QLabel("目标 TARGET Y:")
+        self.lbl_tscale = QLabel("TARGET 单独缩放:")
+
+        f3.addRow(self.lbl_fx, self.sp_fx)
+        f3.addRow(self.lbl_fy, self.sp_fy)
+        f3.addRow(self.lbl_fscale, self.sp_fscale)
+        f3.addRow(self.lbl_tx, self.sp_tx)
+        f3.addRow(self.lbl_ty, self.sp_ty)
+        f3.addRow(self.lbl_tscale, self.sp_tscale)
+
+        # 引擎面板（长条，仅空战有）：独立开关 + 位置 + 缩放。
+        # 打包进一个容器，切模式时整组显隐（陆战没有引擎面板）。
+        self.eng_box = QWidget()
+        fe = QFormLayout(self.eng_box)
+        fe.setContentsMargins(0, 0, 0, 0)
+        fe.setLabelAlignment(Qt.AlignRight)
+        self.chk_engine = QCheckBox("显示引擎面板（长条）")
+        self.chk_engine.setFont(QFont("Consolas", 9))
+        self.chk_engine.setToolTip("勾选后空战 HUD 显示横向长条的引擎面板（不必再设环境变量）")
+        self.sp_ex, self.sp_ey = _xy_spin(
+            "引擎长条左上角的屏幕 X；右下角约 = 屏幕宽 - 750",
+            "引擎长条左上角的屏幕 Y；右下角约 = 屏幕高 - 90")
+        self.sp_escale = _scale_spin()
+        fe.addRow(self.chk_engine)
+        fe.addRow("引擎面板 X:", self.sp_ex)
+        fe.addRow("引擎面板 Y:", self.sp_ey)
+        fe.addRow("引擎面板缩放:", self.sp_escale)
+        f3.addRow(self.eng_box)
 
         # 缩放：一处生效即面板尺寸+字号+内部间距一起变
         self.sp_scale = QDoubleSpinBox()
@@ -467,6 +498,15 @@ class Launcher(QMainWindow):
         # 顺带收掉守护拉起的 HUD：否则关了自动切换，屏幕上还留着一个 HUD，很莫名
         for pid in set(hud_pids()) | set(hud_pids_scan()):
             _hidden_run(["taskkill", "/F", "/PID", str(pid)], timeout=5)
+        # ⚠ taskkill /F 强杀不会跑守护的清理逻辑，旧 PID/心跳文件会残留，
+        #   导致下一次 start_auto 误判"已在运行"而不重启 → 改完布局不重载。
+        #   这里显式清掉，保证「应用并重启」一定能拉起新的守护+HUD 重新读配置。
+        try:
+            from wt_hud_launcher import clear_pid, PID_DAEMON, HEARTBEAT
+            clear_pid(PID_DAEMON)
+            clear_pid(HEARTBEAT)
+        except Exception:
+            pass
         if not silent:
             self.say("已关闭自动切换")
 
@@ -501,32 +541,63 @@ class Launcher(QMainWindow):
         ⚠ 不要硬编码成空战 HUD（旧代码就是这么写的）——
         GUI 已经不区分模式了，重启一律回到自动识别。
         """
-        self.say("重启 HUD（自动识别载具）…")
+        self.say("保存并重启 HUD（自动识别载具）…")
+        self.save_layout()
         self.stop(silent=True)
         self.start_auto()
 
     # ---- 布局读写 ----
-    def _on_abs_toggled(self, on):
-        """只有勾了"用绝对坐标"才启用 X/Y 输入框"""
-        self.sp_tx.setEnabled(on)
-        self.sp_ty.setEnabled(on)
+    def _layout_path(self):
+        """当前模式（空战 / 陆战）对应的布局配置文件路径"""
+        name = ("hud_layout_air.json" if self.layout_mode == "air"
+                else "hud_layout_ground.json")
+        return os.path.join(HERE, "wt_air_hud", name)
+
+    def _default_pos(self, corner):
+        """把角落代号换算成默认像素坐标（面板约 255x175，边距 15）—— 与渲染端角落一致"""
+        w, h = self._screen_w, self._screen_h
+        if corner == "TL":
+            return (15, 15)
+        if corner == "TR":
+            return (w - 255 - 15, 15)
+        if corner == "BL":
+            return (15, h - 175 - 15)
+        return (w - 255 - 15, h - 175 - 15)      # BR
+
+    def _update_mode_labels(self):
+        """面板叫法随模式变化：空战=飞行/爬升+目标，陆战=载具状态+战场态势"""
+        if self.layout_mode == "air":
+            f_name, t_name = "飞行/爬升面板", "目标 TARGET"
+        else:
+            f_name, t_name = "载具状态面板", "战场态势 TARGET"
+        self.lbl_fx.setText(f"{f_name} X:")
+        self.lbl_fy.setText(f"{f_name} Y:")
+        self.lbl_fscale.setText(f"{f_name}缩放:")
+        self.lbl_tx.setText(f"{t_name} X:")
+        self.lbl_ty.setText(f"{t_name} Y:")
+        self.lbl_tscale.setText(f"{t_name}缩放:")
+        # 引擎面板只有空战有：陆战模式整组隐藏
+        self.eng_box.setVisible(self.layout_mode == "air")
+
+    def _on_mode_changed(self, text):
+        """切换模式：先自动保存当前模式的改动，再载入新模式，避免丢失"""
+        try:
+            self.save_layout(silent=True)
+        except Exception:
+            pass
+        self.layout_mode = "air" if text == "空战" else "ground"
+        self.load_layout_ui()
+        self.say(f"已切换到【{text}】布局（已自动保存上一模式）")
 
     def load_layout_ui(self):
-        """从 hud_layout.json 读入当前值，填进窗口控件"""
+        """从当前模式的布局文件读入当前值，填进窗口控件"""
         try:
-            with open(LAYOUT_JSON, "r", encoding="utf-8") as f:
+            with open(self._layout_path(), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
         except Exception:
             cfg = {}
         if not isinstance(cfg, dict):
             cfg = {}
-        self.cmb_flight.setCurrentText(str(cfg.get("flight", "BL")).upper())
-        self.cmb_target.setCurrentText(str(cfg.get("target", "BR")).upper())
-        self.cmb_combat.setCurrentText(str(cfg.get("combat", "OFF")).upper())
-        off = cfg.get("offset") or {}
-        t = off.get("target", [0, 0]) if isinstance(off, dict) else [0, 0]
-        self.sp_dx.setValue(int(t[0]) if len(t) > 0 else 0)
-        self.sp_dy.setValue(int(t[1]) if len(t) > 1 else 0)
         ui = cfg.get("ui") or {}
         if isinstance(ui, dict):
             try:
@@ -537,78 +608,98 @@ class Launcher(QMainWindow):
             if isinstance(f, str) and f.strip():
                 self.cmb_font.setCurrentText(f.strip())
 
-        # TARGET 绝对坐标（pos）
+        # 两个面板都用绝对坐标定位；没配过就按屏幕分辨率给"角落默认值"
         pcfg = cfg.get("pos") if isinstance(cfg.get("pos"), dict) else {}
-        tp = pcfg.get("target") if isinstance(pcfg, dict) else None
-        if isinstance(tp, list) and len(tp) >= 2:
-            self.chk_abs.setChecked(True)
-            self.sp_tx.setValue(int(tp[0]))
-            self.sp_ty.setValue(int(tp[1]))
-        else:
-            self.chk_abs.setChecked(False)
-            self.sp_tx.setValue(0)
-            self.sp_ty.setValue(0)
-        self._on_abs_toggled(self.chk_abs.isChecked())
+        for key, sx, sy, corner in (("flight", self.sp_fx, self.sp_fy, "TL"),
+                                    ("target", self.sp_tx, self.sp_ty, "BR")):
+            pv = pcfg.get(key)
+            if isinstance(pv, list) and len(pv) >= 2:
+                sx.setValue(int(pv[0]))
+                sy.setValue(int(pv[1]))
+            else:
+                dx, dy = self._default_pos(corner)
+                sx.setValue(dx)
+                sy.setValue(dy)
 
-        # TARGET 单独缩放（panel_scale）
+        # 两个面板各自的单独缩放
         psc = cfg.get("panel_scale") if isinstance(cfg.get("panel_scale"), dict) else {}
-        try:
-            self.sp_tscale.setValue(float(psc.get("target", 1.0)))
-        except Exception:
-            self.sp_tscale.setValue(1.0)
+        for key, sp in (("flight", self.sp_fscale), ("target", self.sp_tscale)):
+            try:
+                sp.setValue(float(psc.get(key, 1.0)))
+            except Exception:
+                sp.setValue(1.0)
 
-    def save_layout(self):
-        """把窗口里的设置写回 hud_layout.json"""
+        # 引擎面板（仅空战）：开关 + 位置 + 缩放
+        eng = str(cfg.get("engine", "OFF")).upper()
+        self.chk_engine.setChecked(eng not in ("OFF", ""))
+        ep = pcfg.get("engine")
+        if isinstance(ep, list) and len(ep) >= 2:
+            self.sp_ex.setValue(int(ep[0]))
+            self.sp_ey.setValue(int(ep[1]))
+        else:
+            self.sp_ex.setValue(self._screen_w - 750)
+            self.sp_ey.setValue(self._screen_h - 90)
         try:
-            with open(LAYOUT_JSON, "r", encoding="utf-8") as f:
+            self.sp_escale.setValue(float(psc.get("engine", 1.0)))
+        except Exception:
+            self.sp_escale.setValue(1.0)
+
+        self._update_mode_labels()
+
+    def save_layout(self, silent=False):
+        """把窗口里的设置写回当前模式的布局文件"""
+        try:
+            with open(self._layout_path(), "r", encoding="utf-8") as f:
                 cfg = json.load(f)
         except Exception:
             cfg = {}
         if not isinstance(cfg, dict):
             cfg = {}
 
-        cfg["flight"] = self.cmb_flight.currentText()
-        cfg["target"] = self.cmb_target.currentText()
-        cfg["combat"] = self.cmb_combat.currentText()
-        cfg["offset"] = {"target": [self.sp_dx.value(), self.sp_dy.value()]}
         cfg["ui"] = {"scale": round(self.sp_scale.value(), 2),
                      "font": self.cmb_font.currentText().strip() or "Consolas"}
+        # 面板定位只用绝对坐标一种：flight / target 都写进 pos
+        cfg["pos"] = {"flight": [self.sp_fx.value(), self.sp_fy.value()],
+                      "target": [self.sp_tx.value(), self.sp_ty.value()],
+                      "engine": [self.sp_ex.value(), self.sp_ey.value()]}
+        # offset 已废弃（GUI 不再暴露偏移），清掉以免叠加到绝对坐标上
+        cfg.pop("offset", None)
+        # 保留配置里的角落代号（flight:TL / target:BR）作兜底：pos 优先，缺省时按角落显示
 
-        # TARGET 绝对坐标：勾上才写，取消勾选要把 target 从 pos 里摘掉
-        pcfg = cfg.get("pos") if isinstance(cfg.get("pos"), dict) else {}
-        if self.chk_abs.isChecked():
-            pcfg["target"] = [self.sp_tx.value(), self.sp_ty.value()]
-        else:
-            pcfg.pop("target", None)
-        cfg["pos"] = pcfg
+        # 引擎面板（仅空战）：开关写 engine 键（非 OFF 即显示）
+        cfg["engine"] = "ON" if self.chk_engine.isChecked() else "OFF"
 
-        # TARGET 单独缩放
+        # 各面板单独的缩放（覆盖"整体缩放"）
         psc = cfg.get("panel_scale") if isinstance(cfg.get("panel_scale"), dict) else {}
+        psc["flight"] = round(self.sp_fscale.value(), 2)
         psc["target"] = round(self.sp_tscale.value(), 2)
+        psc["engine"] = round(self.sp_escale.value(), 2)
         cfg["panel_scale"] = psc
 
         try:
-            with open(LAYOUT_JSON, "w", encoding="utf-8") as f:
+            with open(self._layout_path(), "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
-            extra = f" TARGET缩放={psc['target']}倍"
-            if self.chk_abs.isChecked():
-                extra += (f" TARGET绝对坐标="
-                          f"({self.sp_tx.value()},{self.sp_ty.value()})")
-            self.say(f"已保存: flight={cfg['flight']} "
-                     f"target={cfg['target']} "
-                     f"偏移=({self.sp_dx.value()},{self.sp_dy.value()}) "
-                     f"缩放={cfg['ui']['scale']}倍 字体={cfg['ui']['font']}"
-                     f"{extra} — 点『应用并重启』生效")
+            if not silent:
+                self.say(f"已保存【{'空战' if self.layout_mode == 'air' else '陆战'}】布局: "
+                         f"面板1=({self.sp_fx.value()},{self.sp_fy.value()}) "
+                         f"缩放{psc['flight']}倍 "
+                         f"TARGET=({self.sp_tx.value()},{self.sp_ty.value()}) "
+                         f"缩放{psc['target']}倍 "
+                         f"整体={cfg['ui']['scale']}倍 字体={cfg['ui']['font']}"
+                         f"{' 引擎=开' if self.chk_engine.isChecked() else ''}"
+                         f" — 点『应用并重启』生效")
         except Exception as e:
-            self.say(f"保存失败: {e}")
+            if not silent:
+                self.say(f"保存失败: {e}")
 
     def open_layout(self):
-        if not os.path.exists(LAYOUT_JSON):
+        if not os.path.exists(self._layout_path()):
             self.say("布局文件不存在")
             return
         try:
-            os.startfile(LAYOUT_JSON)
-            self.say("已打开 hud_layout.json（改完重启 HUD 生效）")
+            os.startfile(self._layout_path())
+            self.say(f"已打开【{'空战' if self.layout_mode == 'air' else '陆战'}】"
+                     f"布局文件（改完重启 HUD 生效）")
         except Exception as e:
             self.say(f"打开失败: {e}")
 

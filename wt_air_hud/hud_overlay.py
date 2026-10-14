@@ -100,7 +100,7 @@ class AirHudOverlay(QWidget):
 
         try:
             cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "hud_layout.json")
+                               "hud_layout_air.json")
             if os.path.exists(cfg):
                 with open(cfg, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -173,11 +173,12 @@ class AirHudOverlay(QWidget):
         注意：偏移必须用「之前所有面板的累计高度」，
         不能用 n*h（各面板高度不同，那样会互相重叠）。
         """
-        # 绝对坐标优先：给了 pos 就直接定位，忽略角落代号与同角落堆叠
+        # 绝对坐标优先：给了 pos 就直接定位，忽略角落代号、偏移与同角落堆叠。
+        # ⚠ 绝对坐标 = 最终位置，不再叠加 offset：
+        #    定位方式只保留「绝对 X/Y」一种，旧配置里残留的 offset 会让它悄悄跑偏。
         if key in self.poses:
             ax, ay = self.poses[key]
-            dx, dy = self.offsets.get(key, (0, 0))
-            return (int(ax + dx), int(ay + dy))
+            return (int(ax), int(ay))
 
         pos = (self.layout.get(key) or "OFF").upper()
         if pos not in ("TL", "TR", "BL", "BR"):
@@ -315,9 +316,17 @@ class AirHudOverlay(QWidget):
             # 威胁列表默认关。开启时若配置里没指定角落，放到右上（避开左上的飞行数据）
             pos = self.panel_pos("threat", 240, 200) or (self.sw - 255, 15)
             panels.insert(0, (self._draw_threat_panel, (p, pos[0], pos[1], data)))
-        if os.environ.get("WT_HUD_ENGINE", "") == "1":
-            eng = self.panel_pos("engine", 240, 185) or (self.sw - 255, self.sh - 375)
-            panels.append((self._draw_engine_panel, (p, eng[0], eng[1], data)))
+        # 引擎面板（长条）：环境变量 WT_HUD_ENGINE=1 或配置里 engine 非 OFF 时显示。
+        # 高度按引擎数量算，位置/缩放支持 pos / panel_scale（可在启动器 GUI 里设）。
+        eng_on = (os.environ.get("WT_HUD_ENGINE", "") == "1"
+                  or (self.layout.get("engine") or "OFF").upper() not in ("OFF", ""))
+        if eng_on:
+            engines = (data.get("flight") or {}).get("engines") or []
+            nb = max(1, len(engines))
+            eng_w, eng_h = 720, 24 + 28 * nb
+            eps = float(self.pscales.get("engine", s))
+            eng = self.panel_pos("engine", eng_w * eps, eng_h * eps) or (self.sw - 750, self.sh - 90)
+            panels.append((self._draw_engine_panel, (p, eng[0], eng[1], data, eps)))
 
         for draw_fn, args in panels:
             try:
@@ -865,60 +874,62 @@ class AirHudOverlay(QWidget):
         p.drawText(x + 100, y + h - 12, "ALT n/a")
 
     def _draw_engine_panel(self, p, x, y, data):
-        """Right bottom: engine status"""
-        w, h = 240, 185
+        """引擎面板（长条）：横向细长，每个引擎一行 —— 长油门条 + 紧凑读数。
+
+        与旧版方块面板相比，只改形态（内容不变）：油门条从 4px 加粗到 15px 并拉长，
+        其余读数（RPM / 油温 / 推力 / 效率）横向排开。
+        高度会随引擎数量变化：h = 24 + 28 * 引擎数。
+        """
+        flight = data.get("flight")
+        engines = (flight or {}).get("engines") or []
+        nb = max(1, len(engines))
+        w, h = 720, 24 + 28 * nb
         self._draw_panel(p, x, y, w, h, "ENGINES")
 
-        flight = data.get("flight")
-        if not flight or not flight.get("engines"):
+        if not engines:
             p.setPen(self.MUTED)
             p.setFont(QFont(self.FONT_NAME, 10))
-            p.drawText(x + 10, y + 42, "No engine data")
+            p.drawText(x + 10, y + 38, "No engine data")
             return
 
-        p.setFont(QFont(self.FONT_NAME, 9))
-        yy = y + 36
+        for i, eng in enumerate(engines):
+            y0 = y + 22 + i * 28
+            thr = max(0.0, min(100.0, eng.get("throttle", 0) or 0))
+            rpm = eng.get("rpm", 0) or 0
+            oil = eng.get("oil_temp", 0) or 0
+            thrust = eng.get("thrust", 0) or 0
+            eff = eng.get("efficiency", 0) or 0
 
-        for i, eng in enumerate(flight["engines"]):
-            row_y = yy + i * 48
-
-            # Engine number
+            # 引擎编号
             p.setPen(self.WHITE)
-            p.setFont(QFont(self.FONT_NAME, 10, QFont.Bold))
-            p.drawText(x + 10, row_y + 10, f"E{i+1}")
+            p.setFont(QFont(self.FONT_NAME, 9, QFont.Bold))
+            p.drawText(x + 10, y0 + 14, f"E{i + 1}")
 
-            # Throttle
-            p.setFont(QFont(self.FONT_NAME, 9))
-            p.setPen(self.GREEN if eng["throttle"] > 50 else self.MUTED)
-            p.drawText(x + 30, row_y + 10, f"THR {eng['throttle']:.0f}%")
-
-            # RPM
-            p.setPen(self.WHITE)
-            p.drawText(x + 110, row_y + 10, f"RPM {eng['rpm']:.0f}")
-
-            # Oil temp
-            oil = eng["oil_temp"]
-            oil_color = self.RED if oil > 110 else (self.ORANGE if oil > 90 else self.GREEN)
-            p.setPen(oil_color)
-            p.drawText(x + 10, row_y + 22, f"Oil {oil:.0f}C")
-
-            # Thrust
-            if eng["thrust"] > 0:
-                p.setPen(self.CYAN)
-                p.drawText(x + 70, row_y + 22, f"Thr {eng['thrust']:.0f}kg")
-
-            # Efficiency
-            eff = eng["efficiency"]
-            eff_color = self.RED if eff < 50 else (self.ORANGE if eff < 80 else self.GREEN)
-            p.setPen(eff_color)
-            p.drawText(x + 140, row_y + 22, f"Eff {eff:.0f}%")
-
-            # Throttle bar
+            # 长油门条（这一版的主体，占左侧大部分宽度）
+            bar_x, bar_y, bar_w, bar_h = x + 38, y0 + 3, 320, 15
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(30, 30, 40))
-            p.drawRoundedRect(x + 10, row_y + 28, w - 20, 4, 2, 2)
-            p.setBrush(self.GREEN)
-            p.drawRoundedRect(x + 10, row_y + 28, int((w - 20) * eng["throttle"] / 100), 4, 2, 2)
+            p.drawRoundedRect(bar_x, bar_y, bar_w, bar_h, 3, 3)
+            thr_col = self.GREEN if thr > 50 else (self.ORANGE if thr > 20 else self.RED)
+            p.setBrush(thr_col)
+            p.drawRoundedRect(bar_x, bar_y, int(bar_w * thr / 100.0), bar_h, 3, 3)
+            # 条内左端标油门百分比
+            p.setPen(self.WHITE)
+            p.setFont(QFont(self.FONT_NAME, 8))
+            p.drawText(bar_x + 6, y0 + 14, f"{thr:.0f}%")
+
+            # 右侧紧凑读数
+            p.setPen(self.WHITE)
+            p.drawText(x + 372, y0 + 14, f"RPM {rpm:.0f}")
+            oil_col = self.RED if oil > 110 else (self.ORANGE if oil > 90 else self.GREEN)
+            p.setPen(oil_col)
+            p.drawText(x + 452, y0 + 14, f"OIL {oil:.0f}C")
+            if thrust > 0:
+                p.setPen(self.CYAN)
+                p.drawText(x + 540, y0 + 14, f"T {thrust:.0f}kg")
+            eff_col = self.RED if eff < 50 else (self.ORANGE if eff < 80 else self.GREEN)
+            p.setPen(eff_col)
+            p.drawText(x + 628, y0 + 14, f"EFF {eff:.0f}%")
 
     def _draw_radar(self, p, x, y, data):
         """Center: tactical radar"""

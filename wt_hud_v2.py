@@ -232,6 +232,19 @@ class HudOverlay(QWidget):
     WHITE = QColor(226, 232, 240)
     MUTED = QColor(136, 136, 128)
 
+    # ---- 布局配置：与空战 HUD 共用 hud_layout.json 的语义 ----
+    # 载具状态(flight) 默认左上，战场态势(target) 默认右下。
+    # 支持：角落代号 TL/TR/BL/BR/OFF、偏移 offset、绝对坐标 pos、单面板缩放 panel_scale。
+    # ⚠ 之前这两块位置是写死的（15,15 和 sw-255,sh-175），GUI 里改 TARGET 坐标对陆战无效，
+    #    现在统一读 hud_layout.json，启动器「面板位置」设置对陆战/空战都生效。
+    DEFAULT_LAYOUT = {"flight": "TL", "target": "BR",
+                      "combat": "OFF", "engine": "OFF", "threat": "OFF"}
+    DEFAULT_OFFSETS = {}
+    DEFAULT_POSES = {}
+    DEFAULT_PANEL_SCALES = {}
+    PANEL_MARGIN = 15
+    DEFAULT_UI = {"scale": 1.0, "font": "Microsoft YaHei"}
+
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
@@ -260,6 +273,10 @@ class HudOverlay(QWidget):
         self.fg_timer = QTimer(self)
         self.fg_timer.timeout.connect(self._check_foreground)
         self.fg_timer.start(400)
+
+        # 面板布局：读 hud_layout.json（角落/偏移/绝对坐标/单面板缩放）
+        # 默认值见 DEFAULT_LAYOUT，保证不改配置时行为和以前一致（载具左上、战场态势右下）
+        self.layout, self.offsets, self.ui, self.poses, self.pscales = self._load_layout()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -296,6 +313,135 @@ class HudOverlay(QWidget):
             self.hide()
             print("[HUD] War Thunder 失去焦点 -> HUD 隐藏", flush=True)
 
+    # ---- 布局：面板位置/缩放（与空战 HUD 同套 hud_layout.json 语义）----
+    @staticmethod
+    def _load_layout():
+        """
+        读取面板位置配置，返回 (角落, 偏移, UI, 绝对坐标, 单面板缩放)。
+
+        优先级：环境变量 > hud_layout.json > 默认值。
+        角落代号：TL 左上 / TR 右上 / BL 左下 / BR 右下 / OFF 不显示。
+        offset：{"面板名": [dx, dy]}，负 dx = 左移，负 dy = 上移。
+        pos：{"面板名": [x, y]} 绝对坐标（屏幕左上角原点），给了就无视角落代号。
+        panel_scale：{"面板名": 1.3} 单面板缩放，覆盖 ui.scale。
+        """
+        layout = dict(HudOverlay.DEFAULT_LAYOUT)
+        offsets = dict(HudOverlay.DEFAULT_OFFSETS)
+        ui = dict(HudOverlay.DEFAULT_UI)
+        poses = dict(HudOverlay.DEFAULT_POSES)
+        pscales = dict(HudOverlay.DEFAULT_PANEL_SCALES)
+
+        try:
+            # ⚠ 布局文件的位置必须和启动器 GUI（wt_hud_launcher_gui.LAYOUT_JSON）
+            #    以及空战 HUD 保持一致 —— 三者都读写 wt_air_hud/hud_layout.json。
+            #    之前陆战 HUD 读的是自己目录下的 hud_layout.json，和 GUI 写的不是同一个文件，
+            #    导致 GUI 里改 TARGET 坐标对陆战完全无效。这里统一指过去，找不到再回退本地。
+            here = os.path.dirname(os.path.abspath(__file__))
+            cfg = os.path.join(here, "wt_air_hud", "hud_layout_ground.json")
+            if not os.path.exists(cfg):
+                cfg = os.path.join(here, "hud_layout.json")
+            if os.path.exists(cfg):
+                with open(cfg, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if k == "ui" and isinstance(v, dict):
+                            if "scale" in v:
+                                try:
+                                    ui["scale"] = max(0.5, min(3.0, float(v["scale"])))
+                                except Exception:
+                                    pass
+                            fnt = v.get("font")
+                            if isinstance(fnt, str) and fnt.strip():
+                                ui["font"] = fnt.strip()
+                        elif k == "offset" and isinstance(v, dict):
+                            for pk, pv in v.items():
+                                if isinstance(pv, list) and len(pv) >= 2:
+                                    offsets[pk] = (int(pv[0]), int(pv[1]))
+                        elif k == "pos" and isinstance(v, dict):
+                            for pk, pv in v.items():
+                                if isinstance(pv, list) and len(pv) >= 2:
+                                    poses[pk] = (int(pv[0]), int(pv[1]))
+                        elif k == "panel_scale" and isinstance(v, dict):
+                            for pk, pv in v.items():
+                                try:
+                                    pscales[pk] = max(0.5, min(3.0, float(pv)))
+                                except Exception:
+                                    pass
+                        elif k in layout and isinstance(v, str):
+                            layout[k] = v.strip().upper()
+        except Exception:
+            pass
+
+        for env_key, key in (("WT_HUD_FLIGHT", "flight"),
+                             ("WT_HUD_TARGET", "target")):
+            v = os.environ.get(env_key, "").strip().upper()
+            if v:
+                layout[key] = v
+
+        try:
+            sc = os.environ.get("WT_HUD_SCALE", "").strip()
+            if sc:
+                ui["scale"] = max(0.5, min(3.0, float(sc)))
+        except Exception:
+            pass
+        fnt = os.environ.get("WT_HUD_FONT", "").strip()
+        if fnt:
+            ui["font"] = fnt
+        return layout, offsets, ui, poses, pscales
+
+    def reset_stack(self):
+        """每帧开始清空堆叠记录（面板在同一角落时依次排开）"""
+        self._stack_used = {}
+
+    def panel_pos(self, key, w, h):
+        """
+        返回面板左上角坐标 (x, y)；OFF 或未知返回 None。
+
+        绝对坐标优先：给了 pos 就直接定位，忽略角落代号与同角落堆叠。
+        同一角落放多个面板时自动堆叠（上方角落从上往下、下方从下往上）。
+        """
+        if key in self.poses:
+            ax, ay = self.poses[key]
+            # ⚠ 绝对坐标 = 最终位置，不再叠加 offset：
+            #    定位方式只保留「绝对 X/Y」一种，旧配置里残留的 offset 会让它悄悄跑偏。
+            return (int(ax), int(ay))
+
+        pos = (self.layout.get(key) or "OFF").upper()
+        if pos not in ("TL", "TR", "BL", "BR"):
+            return None
+
+        m, gap = self.PANEL_MARGIN, 8
+        used = self._stack_used.get(pos, 0)
+        self._stack_used[pos] = used + h + gap
+
+        if pos == "TL":
+            x, y = m, m + used
+        elif pos == "TR":
+            x, y = self.sw - w - m, m + used
+        elif pos == "BL":
+            x, y = m, self.sh - h - m - used
+        else:
+            x, y = self.sw - w - m, self.sh - h - m - used
+
+        # 附加微调偏移（负 dx = 左移，负 dy = 上移）
+        dx, dy = self.offsets.get(key, (0, 0))
+        return (int(x + dx), int(y + dy))
+
+    def _draw_scaled(self, p, fn, x, y, data, sc):
+        """带单面板缩放地绘制（尺寸+字号一起缩放，与空战 HUD 一致）"""
+        if sc and abs(sc - 1.0) > 1e-3:
+            p.save()
+            p.translate(x, y)
+            p.scale(sc, sc)
+            p.translate(-x, -y)
+            try:
+                fn(p, x, y, data)
+            finally:
+                p.restore()
+        else:
+            fn(p, x, y, data)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -309,10 +455,21 @@ class HudOverlay(QWidget):
 
         data = self.data_thread.get_data()
 
-        # 左上：载具状态（ENGINE / CLIMB）
-        self.draw_vehicle_panel(p, 15, 15, data)
-        # 右下：战场态势（TARGET）
-        self.draw_threat_panel(p, self.sw - 255, self.sh - 175, data)
+        # 载具状态（flight）→ 默认左上；战场态势（target）→ 默认右下
+        # 位置/缩放读 hud_layout.json，可在启动器 GUI「面板位置」里改（含 TARGET 绝对 X/Y）
+        self.reset_stack()
+        s = float(self.ui.get("scale", 1.0))
+
+        f_ps = float(self.pscales.get("flight", s))
+        fp = self.panel_pos("flight", 240 * f_ps, 160 * f_ps)
+        if fp is not None:
+            self._draw_scaled(p, self.draw_vehicle_panel, fp[0], fp[1], data, f_ps)
+
+        t_ps = float(self.pscales.get("target", s))
+        tp = self.panel_pos("target", 240 * t_ps, 160 * t_ps)
+        if tp is not None:
+            self._draw_scaled(p, self.draw_threat_panel, tp[0], tp[1], data, t_ps)
+
         # 底部中央：警报条
         self.draw_alert_bar(p, data)
         # 屏幕边缘：敌人方向指示箭头
