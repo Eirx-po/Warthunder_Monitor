@@ -21,3 +21,6 @@ power_curve_*.csv
 
 # PID 登记文件（运行时生成）/ runtime pid files
 .wt_*
+
+# 本地持久虚拟环境（存 PyQt5，managed 环境会被重置清掉）/ local venv, do NOT upload
+.venv_wt/

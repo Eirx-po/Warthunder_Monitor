@@ -55,10 +55,25 @@ POWER_CURVE = _resolve("wt_power_curve.py")
 DAEMON = _resolve("wt_hud_launcher.py")   # 守护模式：按载具自动切换空战/陆战
 DAEMON_LOG = os.path.join(HERE, "wt_daemon.log")
 
-PYTHON = (r"C:\Users\Administrator\.workbuddy\binaries\python"
-          r"\versions\3.13.12\python.exe")
-if not os.path.exists(PYTHON):
-    PYTHON = sys.executable
+def _resolve_python():
+    """挑一个带 PyQt5 的解释器：优先工作区内的持久 venv。
+
+    managed 主环境的 site-packages 会被环境重置周期性清掉（PyQt5 反复丢失，
+    表现为双击 bat 只报 "Launcher exited with an error."，因为 pythonw 无控制台、
+    traceback 被吞）。放到工作区自己的 .venv_wt 里就不会被清。
+    """
+    for rel in ((".venv_wt", "Scripts", "pythonw.exe"),
+                (".venv_wt", "Scripts", "python.exe")):
+        cand = os.path.join(HERE, *rel)
+        if os.path.exists(cand):
+            return cand
+    if sys.executable and os.path.exists(sys.executable):
+        return sys.executable
+    return (r"C:\Users\Administrator\.workbuddy\binaries\python"
+            r"\versions\3.13.12\python.exe")
+
+
+PYTHON = _resolve_python()
 
 # ⚠ 子进程一律 CREATE_NO_WINDOW（0x08000000），不要用 CREATE_NEW_CONSOLE。
 # 陆战里上飞机/被打下来会来回切 HUD，每切一次弹一个黑色 CMD 窗口非常干扰游戏。

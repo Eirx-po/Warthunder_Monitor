@@ -34,8 +34,28 @@ except Exception:
     pass
 
 BASE = "http://localhost:8111"
-PYTHON = r"C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _resolve_python():
+    """挑一个带 PyQt5 的解释器：优先工作区内的持久 venv。
+
+    managed 主环境的 site-packages 会被环境重置周期性清掉（PyQt5 反复丢失 ->
+    HUD 子进程起不来）。HUD 是 GUI 程序，没有控制台，报错会被静默吞掉，
+    所以这里必须指向 .venv_wt 这种不会被清的解释器。
+    """
+    for rel in ((".venv_wt", "Scripts", "pythonw.exe"),
+                (".venv_wt", "Scripts", "python.exe")):
+        cand = os.path.join(BASE_DIR, *rel)
+        if os.path.exists(cand):
+            return cand
+    if sys.executable and os.path.exists(sys.executable):
+        return sys.executable
+    return (r"C:\Users\Administrator\.workbuddy\binaries\python"
+            r"\versions\3.13.12\python.exe")
+
+
+PYTHON = _resolve_python()
 
 AIR_HUD = os.path.join(BASE_DIR, "wt_air_hud", "main.py")
 GROUND_HUD = os.path.join(BASE_DIR, "wt_hud_v2.py")
