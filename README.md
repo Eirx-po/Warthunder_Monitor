@@ -82,6 +82,8 @@ J:\Quant\
 | 左下 / Bottom-left | ENGINE / CLIMB | 推力/功率、爬升率 Vy、**Ps 比能量**（绿=攒能量 / 红=烧能量）<br>Thrust/power, climb rate Vy, **specific excess power Ps** (green = gaining, red = burning energy) |
 | 右下（左移 300px）/ Bottom-right (shifted 300px left) | TARGET | 最近空中目标：距离 / 速度 / 接近率；**跳过机头 ±25°（12 点）内目标**<br>Nearest air target: range / speed / closure; **skips targets within ±25° of the nose (12 o'clock)** |
 | 屏幕四边缘 / Screen edges | 方向箭头 / Direction arrows | 仅空中目标的方位指示<br>Bearing cues for air targets only |
+| 左下 / Bottom-left | **BOMB ZONE** 面板 | 最近可轰炸目标（敌军机场 / 敌方地面单位）的距离 + 方位；**仅 RB/SB 自动显示**<br>Nearest bombable target (enemy airfield / enemy ground unit) range + bearing; **auto-shown in RB/SB only** |
+| 屏幕四边缘 / Screen edges | 轰炸箭头 / Bomb arrows | 洋红三角 + `B` 标签，指向 BOMB 目标（与空战箭头颜色区分）<br>Magenta triangle + `B` label pointing at BOMB targets (distinct color from air arrows) |
 | 右上 / 左上 / Top-right / Top-left | — | 留空给游戏自带小地图和界面<br>Left empty for the game's own minimap and UI |
 
 威胁列表、地面目标、详细飞行数据默认全关——设计原则是**极简，不重复游戏内已有读数**。
@@ -97,6 +99,8 @@ Threat list, ground targets, and detailed flight data are all off by default —
                              // Merged into "flight"; enabling it duplicates content
   "engine": "OFF",
   "threat": "OFF",
+  "bomb": "BL",              // 轰炸战区 BOMB 面板角落（仅 RB/SB 自动显示）
+                             // Bomb-zone (BOMB) panel corner (auto-shown in RB/SB only)
   "offset": { "target": [-300, 0] },   // 像素微调：负 dx 左移、负 dy 上移
                                        // Pixel nudge: negative dx = left, negative dy = up
   "ui": { "scale": 0.8, "font": "Microsoft YaHei" }
@@ -121,6 +125,38 @@ Changes take effect after a HUD restart. **Editing via the launcher GUI is recom
 
 优先级：环境变量 > json > 默认值。
 Precedence: environment variables > JSON > built-in defaults.
+
+### 轰炸战区 BOMB 层 / Bomb-zone (BOMB) layer
+
+轰炸机 / 对地支援在 **全真(RB)/模拟(SB)** 模式下的痛点：普通目标列表与边缘箭头只在
+`track_ground_targets()` 开启时显示地面单位，而 RB/SB 里该开关是关的——**看不到该炸哪**。
+BOMB 层就是专门补这块的：从普通目标列表**独立**出来，单独采集「**敌军机场**」（永远是轰炸目标）
+和「**敌方地面单位**」（坦克 / 防空炮 / SPAA / 城镇 / 工厂 / 碉堡 / 舰船…），用**洋红**渲染，
+和空战目标的红/蓝明显区分。
+
+Bomb-layer quirks in **RB/SB**: ground units are filtered out of the normal target list, so
+bombers have nothing to aim at. The BOMB layer collects enemy airfields (always a valid target)
+and enemy ground units independently and renders them in **magenta**, clearly distinct from the
+red/blue air-target colors.
+
+**默认行为 / Default behavior**：
+- `auto`：仅 RB/SB 启用；AB(街机) 不启用（避免和已显示的地面目标重复）。
+- 友方机场自动跳过（不标）。
+- 用独立的 `bomb_mgr` 聚类去重，且**同步真实空战地图跨度 65536**（误用默认 4096 会把远处机场/地面单位并成一个）。
+- 地图对象里**没有**专门的「轰炸战区」type：城镇/基地/工厂等可轰炸目标都是 `ground_model`，靠 `icon` 区分，颜色按红=敌 / 蓝=友。
+
+**环境变量 / Environment variables**：
+
+| 变量 / Variable | 作用 / Effect | 默认 / Default |
+|---|---|---|
+| `WT_HUD_BOMB_ZONE` | BOMB 层总开关<br>Master switch for the BOMB layer | `auto`（仅 RB/SB）；`1`=全模式开；`0`=关 |
+| `WT_HUD_BOMB_GROUND` | BOMB 层是否含**敌方地面单位**（机场永远包含）<br>Whether the BOMB layer includes enemy ground units (airfields always included) | `1`；设 `0` 只留机场 |
+| `WT_HUD_BOMB` | BOMB ZONE 面板角落<br>BOMB ZONE panel corner | `BL`；`OFF`=不画面板（仍画箭头） |
+
+面板位置也能在 `wt_air_hud/hud_layout.json` 里用 `bomb`（角落）与 `pos.bomb` / `panel_scale.bomb` 精调；
+环境变量优先级最高。改完重启 HUD 生效。
+Panel position is also tunable in `wt_air_hud/hud_layout.json` via `bomb` (corner) and
+`pos.bomb` / `panel_scale.bomb`; env vars win. Restart the HUD to apply.
 
 ---
 
