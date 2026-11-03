@@ -41,6 +41,7 @@ class AirHudOverlay(QWidget):
     BLUE = QColor(52, 152, 219)
     YELLOW = QColor(241, 196, 15)
     ORANGE = QColor(230, 126, 34)
+    BOMB = QColor(255, 64, 160)    # 轰炸战区目标：洋红，区别于空战目标
     CYAN = QColor(26, 188, 156)
     WHITE = QColor(236, 240, 241)
     MUTED = QColor(128, 139, 150)
@@ -141,7 +142,8 @@ class AirHudOverlay(QWidget):
         for env_key, key in (("WT_HUD_FLIGHT", "flight"),
                              ("WT_HUD_TARGET", "target"),
                              ("WT_HUD_COMBAT", "combat"),
-                             ("WT_HUD_ENGINE", "engine")):
+                             ("WT_HUD_ENGINE", "engine"),
+                             ("WT_HUD_BOMB", "bomb")):
             v = os.environ.get(env_key, "").strip().upper()
             if v:
                 layout[key] = v
@@ -265,6 +267,7 @@ class AirHudOverlay(QWidget):
         data["enemies"] = data.get("enemies") or []
         data["allies"] = data.get("allies") or []
         data["zones"] = data.get("zones") or []
+        data["bomb_targets"] = data.get("bomb_targets") or []
 
         # Wrap each panel in try/except so one failure doesn't kill all
         # 屏幕中央不显示内容（雷达/姿态仪），只保留四角面板。
@@ -296,6 +299,9 @@ class AirHudOverlay(QWidget):
             ("flight", flight_fn, 240, flight_h),
             ("target", self._draw_target_panel, 240, 155),
         ]
+        # 轰炸战区 BOMB 面板：仅当 BOMB 叠加层启用时绘制（默认 RB/SB 自动开）
+        if self.fetcher.bomb_zone_enabled():
+            specs.append(("bomb", self._draw_bomb_panel, 230, 150))
         # UI 缩放：用 QPainter 变换实现，绘制代码仍用原始坐标，
         # 尺寸/字号/内部间距一起缩放，无需改动各绘制方法。
         # 定位(panel_pos)用缩放后尺寸，避免溢出或互相重叠。
@@ -311,6 +317,7 @@ class AirHudOverlay(QWidget):
 
         panels.append((self._draw_alert_bar, (p, data)))
         panels.append((self._draw_edge_arrows, (p, data)))
+        panels.append((self._draw_bomb_arrows, (p, data)))
 
         if os.environ.get("WT_HUD_THREAT", "") == "1":
             # 威胁列表默认关。开启时若配置里没指定角落，放到右上（避开左上的飞行数据）
@@ -370,6 +377,7 @@ class AirHudOverlay(QWidget):
         "combat": "BL",
         "engine": "OFF",
         "threat": "OFF",
+        "bomb": "BL",
     }
     # 面板微调偏移：{"面板名": (dx, dy)}，负 dx = 左移、负 dy = 上移
     DEFAULT_OFFSETS = {}
@@ -478,6 +486,87 @@ class AirHudOverlay(QWidget):
             p.drawRect(lx - tw // 2 - 3, ly - 8, tw + 6, 15)
             p.setPen(color)
             p.drawText(lx - tw // 2, ly + 3, label)
+
+    def _draw_bomb_arrows(self, p, data):
+        """
+        屏幕边缘「轰炸战区」方向指示（洋红三角 + B 标签），独立于空战箭头。
+
+        轰炸目标通常很远（机场/地面单位多在视野外），所以不做距离滞回、
+        全部画在边缘；最多 8 个最近目标。
+        """
+        flight = data.get("flight", {})
+        targets = data.get("bomb_targets") or []
+        if not flight or not targets:
+            return
+
+        show = sorted(targets, key=lambda t: t.dist)[:8]
+        arrows = layout_arrows(show, self.sw, self.sh, margin=40, min_gap=46.0)
+
+        for a in arrows:
+            t = a["cluster"]
+            p.save()
+            p.translate(a["x"], a["y"])
+            p.rotate(a["angle"])      # 屏幕约定：右为正 → 顺时针旋转
+            p.setBrush(self.BOMB)
+            p.setPen(Qt.NoPen)
+            tri = QPolygonF([
+                QPoint(0, -10),
+                QPoint(6, 7),
+                QPoint(0, 3),
+                QPoint(-6, 7),
+            ])
+            p.drawPolygon(tri)
+            p.restore()
+
+            # 标签放在箭头内侧（朝屏幕中心），避免被边缘裁掉
+            lx = int(a["x"] - a["dx"] * 28)
+            ly = int(a["y"] - a["dy"] * 28)
+            label = "B"
+            if t.count > 1:
+                label += f"x{t.count}"
+            p.setFont(QFont(self.FONT_NAME, 8, QFont.Bold))
+            fm = p.fontMetrics()
+            tw = fm.horizontalAdvance(label)
+            p.setBrush(QColor(0, 0, 0, 190))
+            p.setPen(Qt.NoPen)
+            p.drawRect(lx - tw // 2 - 3, ly - 8, tw + 6, 15)
+            p.setPen(self.BOMB)
+            p.drawText(lx - tw // 2, ly + 3, label)
+
+    def _draw_bomb_panel(self, p, x, y, data):
+        """
+        轰炸战区目标面板（默认左下）：列出最近的机场 + 敌方地面单位。
+
+        每行：图标/类型 + 距离 + 相对方位（0=正前，右侧为正）。
+        红蓝地面单位靠 icon 名区分，机场固定标 AIRFIELD。
+        """
+        w, h = 230, 150
+        self._draw_panel(p, x, y, w, h, "BOMB ZONE")
+
+        targets = sorted(data.get("bomb_targets") or [], key=lambda t: t.dist)
+        if not targets:
+            p.setPen(self.MUTED)
+            p.setFont(QFont(self.FONT_NAME, 10))
+            p.drawText(x + 10, y + 48, "无轰炸目标")
+            p.setFont(QFont(self.FONT_NAME, 8))
+            p.drawText(x + 10, y + 70, "RB/SB 模式自动启用")
+            return
+
+        yy = y + 40
+        for i, t in enumerate(targets[:6]):
+            ry = yy + i * 18
+            label = (t.icon if t.icon and t.icon != "?" else "TGT")
+            # 机场统一显示为 AIRFIELD（icon 字段可能是 airfield）
+            if label.lower() == "airfield":
+                label = "AIRFIELD"
+            p.setPen(self.BOMB)
+            p.setFont(QFont(self.FONT_NAME, 9, QFont.Bold))
+            p.drawText(x + 10, ry + 10, label[:10])
+            p.setFont(QFont(self.FONT_NAME, 9))
+            p.drawText(x + 130, ry + 10, f"{t.dist/1000:.1f}km")
+            brg = getattr(t, "rel_bearing", 0)
+            p.setPen(self.CYAN)
+            p.drawText(x + 185, ry + 10, f"{brg:+3.0f}d")
 
     def _draw_standby(self, p):
         """Show standby message when not in battle"""

@@ -214,6 +214,12 @@ class AirDataFetcher(threading.Thread):
                                         match_radius_m=600.0,
                                         smooth_alpha=0.35,
                                         ttl_s=3.0)
+        # 轰炸战区(BOMB)目标管理器：机场 + 敌方地面单位，独立于空战目标
+        # （target_mgr 只收空中+地面敌军做"空战目标"，这里单独成一类做"轰炸目标"）
+        self.bomb_mgr = TargetManager(cluster_radius_m=300.0,
+                                      match_radius_m=600.0,
+                                      smooth_alpha=0.35,
+                                      ttl_s=3.0)
         # Game mode: "AB" (arcade) / "RB" (realistic) / "SB" (sim) / "unknown"
         self.game_mode = "unknown"
         self._mode_samples = []  # count of visible enemies per sample
@@ -308,6 +314,36 @@ class AirDataFetcher(threading.Thread):
         if override == "0":
             return False
         return self.game_mode not in ("RB", "SB")
+
+    def bomb_zone_enabled(self):
+        """
+        是否启用「轰炸战区(BOMB)」目标叠加层。
+
+        默认 auto：仅在全真(RB)/模拟(SB) 模式启用。
+        理由：AB(街机) 里地面单位已在普通目标列表/箭头里显示，
+              再开一层 BOMB 会重复；而 RB/SB 里地面单位被 track_ground_targets()
+              过滤掉，轰炸机反而看不到该炸哪 —— 这层专门补上。
+
+        可用环境变量 WT_HUD_BOMB_ZONE 覆盖：
+          "0"   强制关闭
+          "1"   强制全模式启用（含 AB）
+          "auto" 默认：仅 RB/SB
+        """
+        ov = os.environ.get("WT_HUD_BOMB_ZONE", "auto").strip().lower()
+        if ov == "0":
+            return False
+        if ov == "1":
+            return True
+        return self.game_mode in ("RB", "SB")
+
+    def bomb_ground_enabled(self):
+        """
+        BOMB 层是否包含敌方地面单位（坦克/防空炮/SPAA/城镇/工厂/碉堡…）。
+
+        机场(airfield) 永远包含（轰炸基地是最典型的轰炸目标）。
+        用 WT_HUD_BOMB_GROUND=0 可只留机场、不要地面单位。
+        """
+        return os.environ.get("WT_HUD_BOMB_GROUND", "1").strip() != "0"
 
     # 「12点」锥角（度）：机头左右各这么多度内算正前方。
     # 正前方的目标玩家自己直接看得见，HUD 再提示就是噪音 → 选目标时跳过。
@@ -514,6 +550,7 @@ class AirDataFetcher(threading.Thread):
         allies = []
         airfields = []
         zones = []
+        bomb_ground = []   # 敌方地面单位（机场/地面靶），供 BOMB 层使用，不受 track_ground_targets 跳过影响
         targets = []   # 聚类去重后的逻辑目标（供边缘箭头使用）
 
         for obj in mobj:
@@ -534,6 +571,13 @@ class AirDataFetcher(threading.Thread):
             elif otype == "airfield":
                 airfields.append(obj)
             elif otype in ("aircraft", "ground_model"):
+                # 先算敌我色（放在 continue 之前），并把敌方地面单位收进 BOMB 层候选：
+                # RB/SB 里下面会把地面单位从 enemies 里跳过（空战不需要），
+                # 但 BOMB 层（轰炸战区）正需要它们当可轰炸目标。
+                is_enemy = is_enemy_color(color)
+                is_friend = is_friend_color(color)
+                if otype == "ground_model" and is_enemy:
+                    bomb_ground.append(obj)
                 # 历史(RB)/全真(SB)空战不监测地面目标：直接跳过，
                 # 让威胁列表、边缘箭头、战斗指标保持一致（都不含地面单位）。
                 if otype == "ground_model" and not self.track_ground_targets():
@@ -541,8 +585,6 @@ class AirDataFetcher(threading.Thread):
                 # 空战地图同样有敌方地面单位（防空炮 / SPAA，颜色 #f00C00）。
                 # 旧代码只处理 aircraft，导致全部地面目标被漏掉。
                 # 同时旧的颜色白名单漏了 #f00C00 变体，改用 RGB 色系判定。
-                is_enemy = is_enemy_color(color)
-                is_friend = is_friend_color(color)
                 unit = {
                     "icon": icon,
                     "color": color,
@@ -649,8 +691,57 @@ class AirDataFetcher(threading.Thread):
                     span = self._map_span(mi)
                     dx_m = (a["x"] - px) * span
                     dy_m = (a["y"] - py) * span
-                    a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                    a["bearing"] = bearing_compass(dx_m, dy_m)
+                a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
+                a["bearing"] = bearing_compass(dx_m, dy_m)
+
+        # ============ BOMB ZONE 轰炸目标（RB/SB 专用，独立于空战目标）============
+        # 机场(airfield) + 敌方地面单位(ground_model) 作为可轰炸目标，
+        # 带专属洋红标记 / 边缘箭头 / BOMB ZONE 面板。
+        # AB 模式不启用（地面单位已在普通目标里显示，避免重复）。
+        if self.bomb_zone_enabled():
+            bomb_mi = data.get("map_info", {})
+            bomb_span = self._map_span(bomb_mi)
+            # ⚠ 必须把真实地图跨度同步给聚类管理器：内部用归一化坐标做
+            #   匹配/聚类，map_span 若仍是默认 4096（空战图实为 65536），
+            #   match 半径会被放大 16 倍，把相距数公里的目标误并成一个。
+            self.bomb_mgr.map_span = bomb_span
+            bomb_raw = []
+            # 机场：永远纳入（轰炸基地是典型轰炸目标）；友方机场跳过（炸自己无意义）
+            for a in airfields:
+                col = a.get("color", "")
+                if is_friend_color(col):
+                    continue
+                bomb_raw.append((a.get("x", 0), a.get("y", 0), "airfield"))
+            # 敌方地面单位（坦克/防空炮/SPAA/城镇/工厂/碉堡/舰船…）
+            if self.bomb_ground_enabled():
+                for e in bomb_ground:
+                    bomb_raw.append((e.get("x", 0), e.get("y", 0), e.get("icon", "")))
+
+            bomb_units = []
+            for (ox, oy, icon) in bomb_raw:
+                if abs(px) > 1.0 or abs(ox) > 1.0:
+                    bdist = haversine(px, py, ox, oy)
+                    bbrg = bearing(px, py, ox, oy)
+                else:
+                    bdx = (ox - px) * bomb_span
+                    bdy = (oy - py) * bomb_span
+                    bdist = math.sqrt(bdx**2 + bdy**2)
+                    bbrg = bearing_compass(bdx, bdy)
+                bomb_units.append({
+                    "x": ox, "y": oy,
+                    "kind": "bomb",
+                    "icon": icon,
+                    "bearing": bbrg,
+                    "dist": bdist,
+                    "heading": 0.0,
+                })
+            bomb_targets = self.bomb_mgr.update(bomb_units)
+            for t in bomb_targets:
+                # 相对方位（0=正前，右侧为正），供边缘箭头使用
+                t.rel_bearing = norm180(t.bearing - p_hdg)
+            data["bomb_targets"] = bomb_targets
+        else:
+            data["bomb_targets"] = []
 
         data["player"] = player
         data["enemies"] = enemies
