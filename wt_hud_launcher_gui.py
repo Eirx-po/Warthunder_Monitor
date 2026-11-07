@@ -20,7 +20,7 @@ import time
 import traceback
 import urllib.request
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QEvent, QSettings
 from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
 from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox,
                              QDoubleSpinBox, QFormLayout, QGroupBox,
@@ -232,6 +232,10 @@ class Launcher(QMainWindow):
         super().__init__()
         self.setWindowTitle("War Thunder HUD 启动器")
         self.setMinimumWidth(430)
+        # changeEvent 可能在 __init__ 期间就被触发，两个标志必须提前存在
+        self._tray_ok = False
+        self._allow_taskbar_minimize = False
+        self.cb_tray_min = None
         self.proc = None          # HUD 进程（受启停管理）
         self.tool_proc = None     # 独立工具进程（不与 HUD 联动）
         self.auto_proc = None     # 守护进程（自动切换模式）
@@ -289,6 +293,25 @@ class Launcher(QMainWindow):
             cb.setFont(QFont("Consolas", 9))
             f2.addWidget(cb)
         v.addWidget(g_opt)
+
+        # ---- 启动器窗口行为（立即生效，与 HUD 无关）----
+        g_win = QGroupBox("启动器窗口行为（立即生效）")
+        f_win = QVBoxLayout(g_win)
+        self.cb_tray_min = QCheckBox("最小化 / 点『✕』时缩到托盘（不占任务栏）")
+        self.cb_tray_min.setFont(QFont("Consolas", 9))
+        self.cb_tray_min.setToolTip(
+            "勾选：窗口从任务栏消失，只留右下角托盘图标，双击图标恢复。\n"
+            "取消：窗口缩成任务栏按钮。\n"
+            "Win11 可能把托盘图标折叠在任务栏 ^ 里，需要时拖出来固定。")
+        try:
+            _saved = QSettings("WarThunderHUD", "Launcher").value(
+                "minimize_to_tray", True, type=bool)
+        except Exception:
+            _saved = True
+        self.cb_tray_min.setChecked(bool(_saved))
+        self.cb_tray_min.stateChanged.connect(self._save_tray_pref)
+        f_win.addWidget(self.cb_tray_min)
+        v.addWidget(g_win)
 
         # ---- 布局设置（直接写在窗口里，不用开 json 文件）----
         # 空战 / 陆战 两套独立配置，分别设置互不影响
@@ -782,11 +805,13 @@ class Launcher(QMainWindow):
 
     # ---- 缩到任务栏（主）+ 系统托盘（辅）----
     def _init_tray(self):
-        """托盘只作为辅助入口；主路径是「缩到任务栏按钮」。
+        """托盘接管最小化/关闭，把窗口收进右下角图标（默认）。
 
-        曾把『✕』做成 hide() 到托盘，但 Windows 11 会把新托盘图标折叠进
-        「隐藏的图标」，窗口等于凭空消失、任务栏上也点不回来。现在一律用
-        showMinimized()（保留任务栏按钮），hide 只作为托盘菜单里的可选项。
+        由窗口上的「启动器窗口行为」开关决定：
+          勾选（默认）-> 点『—』/『✕』后窗口 hide，任务栏按钮消失，
+                         只留托盘图标，双击恢复；
+          取消勾选    -> 保持系统默认最小化，缩成任务栏按钮。
+        Win11 会把新托盘图标折叠进 ^，所以首次收起时弹气泡提示位置。
         """
         self._really_quit = False
         self._tray_ok = False
@@ -800,18 +825,19 @@ class Launcher(QMainWindow):
             if icon.isNull():
                 icon = make_hud_icon()
             self.tray = QSystemTrayIcon(icon, self)
-            self.tray.setToolTip("War Thunder HUD 启动器")
+            self.tray.setToolTip("War Thunder HUD 启动器（双击恢复）")
 
             menu = QMenu(self)
             act_show = QAction("显示启动器", self)
             act_show.triggered.connect(self._show_window)
             menu.addAction(act_show)
-            act_min = QAction("缩到任务栏", self)
-            act_min.triggered.connect(self._minimize_to_taskbar)
-            menu.addAction(act_min)
-            act_hide = QAction("隐藏到托盘（不占任务栏）", self)
+            menu.addSeparator()
+            act_hide = QAction("缩到托盘（不占任务栏）", self)
             act_hide.triggered.connect(self._hide_to_tray)
             menu.addAction(act_hide)
+            act_min = QAction("最小化到任务栏按钮", self)
+            act_min.triggered.connect(self._minimize_to_taskbar)
+            menu.addAction(act_min)
             menu.addSeparator()
             act_quit = QAction("退出启动器", self)
             act_quit.triggered.connect(self._quit)
@@ -820,40 +846,52 @@ class Launcher(QMainWindow):
             self.tray.activated.connect(self._on_tray_activated)
             self.tray.show()
             self._tray_ok = True
-            self.say("点『—』或『✕』= 缩到任务栏（任务栏按钮可点回）；"
-                     "托盘右键可退出、或选『隐藏到托盘』完全不占任务栏。")
+            self.say("窗口行为开关在上方：默认『缩到托盘』—— 点『—』/『✕』"
+                     "后任务栏按钮消失，双击托盘图标恢复。"
+                     "Win11 若看不到图标，点任务栏 ^ 把它拖出来。")
         except Exception as e:
             self.say(f"系统托盘初始化失败，『✕』将正常关闭启动器: {e}")
 
+    def _save_tray_pref(self, _state=None):
+        try:
+            QSettings("WarThunderHUD", "Launcher").setValue(
+                "minimize_to_tray", self.cb_tray_min.isChecked())
+        except Exception:
+            pass
+
+    def _wants_tray(self):
+        cb = getattr(self, "cb_tray_min", None)
+        return self._tray_ok and cb is not None and cb.isChecked()
+
     def _minimize_to_taskbar(self):
-        """缩到任务栏：最小化成任务栏按钮，不 hide，随时能点回来。"""
+        """缩成任务栏按钮：临时放行 changeEvent，避免又被收进托盘。"""
+        self._allow_taskbar_minimize = True
         self.showMinimized()
+        QTimer.singleShot(400, self._clear_allow_minimize)
+        self.say("已缩到任务栏按钮（HUD 继续运行）")
+
+    def _clear_allow_minimize(self):
+        self._allow_taskbar_minimize = False
+
+    def _hide_to_tray(self):
+        """收进托盘：窗口 hide，任务栏按钮消失，只留右下角托盘图标。"""
+        if not self._tray_ok:
+            self._minimize_to_taskbar()
+            return
+        if not self.isVisible():
+            return              # 已收起，避免 changeEvent 反复调度
+        self.hide()
         if not self._tray_hint_shown:
             self._tray_hint_shown = True
             try:
                 self.tray.showMessage(
                     "WT HUD 启动器",
-                    "已缩到任务栏：点任务栏按钮或双击托盘图标恢复。"
-                    "托盘右键可退出（HUD 继续运行）。",
-                    QSystemTrayIcon.Information, 4000)
+                    "已缩到右下角托盘：双击图标恢复，右键可退出。"
+                    "若看不到图标，请点任务栏的 ^ 把它拖出来（HUD 继续运行）。",
+                    QSystemTrayIcon.Information, 5000)
             except Exception:
                 pass
-        self.say("已缩到任务栏（HUD 继续运行）")
-
-    def _hide_to_tray(self):
-        """完全隐藏到托盘（仅托盘菜单主动选择时才用）。"""
-        if not self._tray_ok:
-            self._minimize_to_taskbar()
-            return
-        self.hide()
-        try:
-            self.tray.showMessage(
-                "WT HUD 启动器",
-                "已隐藏到托盘。双击图标恢复，右键可退出（HUD 继续运行）。",
-                QSystemTrayIcon.Information, 4000)
-        except Exception:
-            pass
-        self.say("已隐藏到托盘（HUD 继续运行）")
+        self.say("已缩到托盘（HUD 继续运行）")
 
     def _show_window(self):
         self.showNormal()
@@ -873,16 +911,29 @@ class Launcher(QMainWindow):
             pass
         QApplication.instance().quit()
 
-    def closeEvent(self, event):
-        """点『✕』= 缩到任务栏（保留任务栏按钮），不再 hide 到托盘。
+    def changeEvent(self, event):
+        """系统『—』按钮：按开关把最小化转成「收进托盘」。"""
+        super().changeEvent(event)
+        if (event.type() == QEvent.WindowStateChange
+                and self.isMinimized()
+                and self._wants_tray()
+                and not self._allow_taskbar_minimize):
+            # 延迟一拍，避免在状态变更回调里直接 hide 造成重入
+            QTimer.singleShot(0, self._hide_to_tray)
 
-        托盘不可用时没有「退出」入口，所以退化为正常关闭，避免窗口关不掉。
+    def closeEvent(self, event):
+        """点『✕』：按开关收进托盘或缩成任务栏按钮。
+
+        托盘不可用时没有「退出」入口，退化为正常关闭，避免窗口关不掉。
         """
         if self._really_quit or not self._tray_ok:
             event.accept()
             return
         event.ignore()
-        self._minimize_to_taskbar()
+        if self._wants_tray():
+            self._hide_to_tray()
+        else:
+            self._minimize_to_taskbar()
 
 
 def _install_crash_log():
