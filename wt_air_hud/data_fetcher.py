@@ -417,56 +417,69 @@ class AirDataFetcher(threading.Thread):
             return None
 
     def run(self):
+        # 单帧异常绝不应杀死抓取线程：一旦线程退出，get_data() 永远返回旧数据，
+        # HUD 会卡死 / 不显示，只能重启才恢复。把每帧工作包在 try/except 里，
+        # 出错时记录日志（wt_air_hud_fetch_error.log）后继续下一帧。
+        import traceback as _tb
+        _err_log = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "wt_air_hud_fetch_error.log")
         while self.running:
-            data = {"ts": time.time(), "in_battle": False}
-
-            # /state - own aircraft full telemetry (AIR BATTLES ONLY)
-            state = self.fetch("/state")
-            data["state"] = state if isinstance(state, dict) else {}
-
-            # /indicators - instruments
-            ind = self.fetch("/indicators")
-            data["indicators"] = ind if isinstance(ind, dict) else {}
-
-            # /map_obj - all units on minimap
-            mobj = self.fetch("/map_obj.json")
-            data["map_obj"] = mobj if isinstance(mobj, list) else []
-
-            # /map_info - map coordinate system
-            mi = self.fetch("/map_info.json")
-            data["map_info"] = mi if isinstance(mi, dict) else {}
-
-            # /hudmsg - events
             try:
-                url = f"{BASE}/hudmsg?lastEvt={self._last_evt}&lastDmg={self._last_dmg}"
-                req = urllib.request.Request(url, headers={"User-Agent": "WT-AirHUD"})
-                with urllib.request.urlopen(req, timeout=1.5) as resp:
-                    hud = json.loads(resp.read().decode("utf-8", "replace"))
-                    if isinstance(hud, dict):
-                        for d in hud.get("damage", []):
-                            self._last_dmg = max(self._last_dmg, d.get("id", 0))
-                        for e in hud.get("events", []):
-                            self._last_evt = max(self._last_evt, e.get("id", 0))
-                    data["hudmsg"] = hud
+                data = {"ts": time.time(), "in_battle": False}
+
+                # /state - own aircraft full telemetry (AIR BATTLES ONLY)
+                state = self.fetch("/state")
+                data["state"] = state if isinstance(state, dict) else {}
+
+                # /indicators - instruments
+                ind = self.fetch("/indicators")
+                data["indicators"] = ind if isinstance(ind, dict) else {}
+
+                # /map_obj - all units on minimap
+                mobj = self.fetch("/map_obj.json")
+                data["map_obj"] = mobj if isinstance(mobj, list) else []
+
+                # /map_info - map coordinate system
+                mi = self.fetch("/map_info.json")
+                data["map_info"] = mi if isinstance(mi, dict) else {}
+
+                # /hudmsg - events
+                try:
+                    url = f"{BASE}/hudmsg?lastEvt={self._last_evt}&lastDmg={self._last_dmg}"
+                    req = urllib.request.Request(url, headers={"User-Agent": "WT-AirHUD"})
+                    with urllib.request.urlopen(req, timeout=1.5) as resp:
+                        hud = json.loads(resp.read().decode("utf-8", "replace"))
+                        if isinstance(hud, dict):
+                            for d in hud.get("damage", []):
+                                self._last_dmg = max(self._last_dmg, d.get("id", 0))
+                            for e in hud.get("events", []):
+                                self._last_evt = max(self._last_evt, e.get("id", 0))
+                        data["hudmsg"] = hud
+                except Exception:
+                    data["hudmsg"] = {}
+
+                # Determine if in battle
+                data["in_battle"] = (data["state"].get("valid", False) or
+                                     data["indicators"].get("valid", False))
+
+                # Parse state data
+                self._parse_state(data)
+
+                # Parse map objects
+                self._parse_map_objects(data)
+
+                # Compute combat metrics
+                self._compute_metrics(data)
+
+                with self.lock:
+                    self.data = data
             except Exception:
-                data["hudmsg"] = {}
-
-            # Determine if in battle
-            data["in_battle"] = (data["state"].get("valid", False) or
-                                 data["indicators"].get("valid", False))
-
-            # Parse state data
-            self._parse_state(data)
-
-            # Parse map objects
-            self._parse_map_objects(data)
-
-            # Compute combat metrics
-            self._compute_metrics(data)
-
-            with self.lock:
-                self.data = data
-
+                try:
+                    with open(_err_log, "a", encoding="utf-8") as _f:
+                        _f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] fetch tick exception:\n")
+                        _tb.print_exc(file=_f)
+                except Exception:
+                    pass
             time.sleep(0.1)  # 10Hz
 
     def _parse_state(self, data):
@@ -691,14 +704,14 @@ class AirDataFetcher(threading.Thread):
                     span = self._map_span(mi)
                     dx_m = (a["x"] - px) * span
                     dy_m = (a["y"] - py) * span
-                a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
-                a["bearing"] = bearing_compass(dx_m, dy_m)
+                    a["dist"] = math.sqrt(dx_m**2 + dy_m**2)
+                    a["bearing"] = bearing_compass(dx_m, dy_m)
 
         # ============ BOMB ZONE 轰炸目标（RB/SB 专用，独立于空战目标）============
         # 机场(airfield) + 敌方地面单位(ground_model) 作为可轰炸目标，
         # 带专属洋红标记 / 边缘箭头 / BOMB ZONE 面板。
         # AB 模式不启用（地面单位已在普通目标里显示，避免重复）。
-        if self.bomb_zone_enabled():
+        if self.bomb_zone_enabled() and player:
             bomb_mi = data.get("map_info", {})
             bomb_span = self._map_span(bomb_mi)
             # ⚠ 必须把真实地图跨度同步给聚类管理器：内部用归一化坐标做

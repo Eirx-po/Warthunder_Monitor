@@ -18,7 +18,11 @@ import sys
 import os
 import json
 import math
+import time
 import ctypes
+
+# Windows API 句柄（HUD 是透明置顶分层窗口，需要直接操作系统窗口样式）
+user32 = ctypes.windll.user32
 
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore import Qt, QTimer, QRect
@@ -75,6 +79,13 @@ class AirHudOverlay(QWidget):
         self.fg_timer = QTimer(self)
         self.fg_timer.timeout.connect(self._check_foreground)
         self.fg_timer.start(400)
+
+        # 窗口存活 / 置顶保活定时器：游戏切全屏 / Alt-Tab / DWM 重置后，透明置顶
+        # 窗口可能丢失可见性或 WS_EX_TOPMOST，表现为「HUD 不显示 / 没数据」。
+        # 周期性检测并在丢失时自动重建窗口（自愈），免去手动重启。
+        self.wd_timer = QTimer(self)
+        self.wd_timer.timeout.connect(self._watchdog)
+        self.wd_timer.start(2000)
 
         self.layout, self.offsets, self.ui, self.poses, self.pscales = self._load_layout()
         self.FONT_NAME = self.ui.get("font", "Consolas")
@@ -206,19 +217,101 @@ class AirHudOverlay(QWidget):
         # 缩放后 w*s/h*s 是浮点，这里统一取整。
         return (int(x + dx), int(y + dy))
 
-    def showEvent(self, event):
-        super().showEvent(event)
+    def _apply_layered_style(self):
+        """鼠标穿透 + 不激活（WS_EX_TRANSPARENT | WS_EX_NOACTIVATE）。
+
+        分层窗口在游戏切换全屏 / Alt-Tab / Alt-Enter / DWM 重置后，这些扩展
+        样式会丢失，导致两种情况：① 窗口重新抢焦点、挡住游戏鼠标；② 更常见的是
+        窗口不再被 DWM 正确合成（置顶丢失），看起来就是「HUD 不显示 / 没数据」，
+        只能靠重启进程重建窗口才恢复。这里集中设置，showEvent 与保活自愈都会调用。
+        """
         try:
             hwnd = int(self.winId())
             GWL_EXSTYLE = -20
-            # 只设置鼠标穿透 + 不激活，让 Qt 自己管理透明度
-            # 不要调用 SetLayeredWindowAttributes，否则与 Qt 的
-            # UpdateLayeredWindowIndirect 冲突导致重绘报错
             WS_EX_TRANSPARENT = 0x00000020
             WS_EX_NOACTIVATE = 0x08000000
             style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             style |= WS_EX_TRANSPARENT | WS_EX_NOACTIVATE
             ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_layered_style()
+
+    def _restore_window(self):
+        """重建并重新应用窗口层级 / 透明 / 置顶样式。
+
+        当保活定时器发现窗口不可见或置顶样式丢失时调用 —— 等价于「自动重启窗口」，
+        无需用户手动重启 HUD 进程。
+        """
+        try:
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+            self.setAttribute(Qt.WA_TranslucentBackground)
+            self.setAttribute(Qt.WA_TransparentForMouseEvents)
+            self.setCursor(Qt.BlankCursor)
+            screen = QApplication.desktop().screenGeometry()
+            self.setGeometry(screen)
+            self.show()
+            self._apply_layered_style()
+            self.update()
+        except Exception:
+            pass
+
+    def _keep_on_top(self):
+        """轻量保活：在已有窗口上主动保持置顶 Z-order，并补设鼠标穿透 /
+        不激活样式。不重建窗口（无闪烁），仅做幂等的 Z-order / 样式修正。
+
+        说明：Qt 的 WindowStaysOnTopHint 走的是 Z-order（SetWindowPos TOPMOST）
+        而非 WS_EX_TOPMOST 扩展样式，所以用「读 EXSTYLE 的 TOPMOST 位」判断置顶
+        是否丢失并不可靠（会误触发重建）。改为周期性主动置顶 + 补设样式，
+        既能在 DWM 重置后自愈，又不会在正常时反复重建窗口造成闪烁。
+        """
+        try:
+            hwnd = int(self.winId())
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            HWND_TOPMOST = -1
+            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                               SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+            # 分层(WS_EX_LAYERED)是 Qt 透明窗口的必需样式；WS_EX_TRANSPARENT /
+            # WS_EX_NOACTIVATE 是我们手动加的、Qt 不管理。三者 DWM 重置后都可能
+            # 丢失，表现为「HUD 整窗变黑 / 不透明 / 不显示」。这里检查并补设。
+            GWL_EXSTYLE = -20
+            WS_EX_TRANSPARENT = 0x00000020
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_LAYERED = 0x80000
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            needed = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE
+            if (style & needed) != needed:
+                style |= needed
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        except Exception:
+            pass
+
+    def _watchdog(self):
+        """窗口存活 / 置顶保活：周期性检测窗口可见性，不可见则自动重建（自愈）；
+        可见则轻量保活（主动置顶 + 补设穿透/不激活）。避免「不显示数据、只能重启」。"""
+        if self._hide_on_blur:
+            return  # 隐藏模式由 _check_foreground 负责，不抢
+        try:
+            if not self.isVisible():
+                self._log_window("window not visible -> auto-restore")
+                self._restore_window()
+                return
+            # 窗口可见：轻量保活（不重建、不闪烁）
+            self._keep_on_top()
+        except Exception:
+            pass
+
+    def _log_window(self, msg):
+        try:
+            log = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "wt_air_hud_window.log")
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
         except Exception:
             pass
 
