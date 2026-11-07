@@ -10,7 +10,8 @@
   "threat": "OFF",
   "panel_scale": {
     "target": 0.8,
-    "flight": 0.7
+    "flight": 0.7,
+    "engine": 1.0
   },
   "ui": {
     "scale": 0.5,
@@ -24,6 +25,10 @@
     "target": [
       1650,
       300
+    ],
+    "engine": [
+      1170,
+      950
     ]
   }
 }

@@ -17,14 +17,16 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 import urllib.request
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QFont
-from PyQt5.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
-                             QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                             QMainWindow, QPushButton, QSpinBox, QTextEdit,
-                             QVBoxLayout, QWidget)
+from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
+from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox,
+                             QDoubleSpinBox, QFormLayout, QGroupBox,
+                             QHBoxLayout, QLabel, QMainWindow, QMenu,
+                             QPushButton, QSpinBox, QSystemTrayIcon,
+                             QTextEdit, QVBoxLayout, QWidget)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -89,6 +91,29 @@ MUTED = QColor(140, 150, 165)
 GREEN = QColor(90, 200, 120)
 AMBER = QColor(230, 180, 70)
 RED = QColor(225, 90, 90)
+
+
+def make_hud_icon():
+    """自绘 HUD 图标：任务栏按钮 + 系统托盘共用。
+
+    默认 pythonw 图标是通用 Python 蟒蛇，缩到任务栏后很难从一堆图标里认出来；
+    折叠的托盘区里更找不到。用蓝底白 H 让两个入口都好认。
+    """
+    try:
+        pm = QPixmap(64, 64)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(38, 110, 190))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(2, 2, 60, 60, 12, 12)
+        p.setPen(QColor(255, 255, 255))
+        p.setFont(QFont("Consolas", 30, QFont.Bold))
+        p.drawText(pm.rect(), Qt.AlignCenter, "H")
+        p.end()
+        return QIcon(pm)
+    except Exception:
+        return QIcon()
 
 
 def fetch_indicators():
@@ -399,6 +424,7 @@ class Launcher(QMainWindow):
         self._pids_cache = []
         self._pids_ts = 0.0
         self.refresh()
+        self._init_tray()
 
     def _cached_hud_pids(self, max_age=3.0):
         now = time.time()
@@ -754,12 +780,145 @@ class Launcher(QMainWindow):
             self.lb_hud.setText("HUD: 未运行")
             self.lb_hud.setStyleSheet(f"color: {RED.name()}")
 
+    # ---- 缩到任务栏（主）+ 系统托盘（辅）----
+    def _init_tray(self):
+        """托盘只作为辅助入口；主路径是「缩到任务栏按钮」。
+
+        曾把『✕』做成 hide() 到托盘，但 Windows 11 会把新托盘图标折叠进
+        「隐藏的图标」，窗口等于凭空消失、任务栏上也点不回来。现在一律用
+        showMinimized()（保留任务栏按钮），hide 只作为托盘菜单里的可选项。
+        """
+        self._really_quit = False
+        self._tray_ok = False
+        self._tray_hint_shown = False
+        try:
+            if not QSystemTrayIcon.isSystemTrayAvailable():
+                self.say("系统托盘不可用：『✕』将正常关闭启动器。")
+                return
+            app = QApplication.instance()
+            icon = app.windowIcon()
+            if icon.isNull():
+                icon = make_hud_icon()
+            self.tray = QSystemTrayIcon(icon, self)
+            self.tray.setToolTip("War Thunder HUD 启动器")
+
+            menu = QMenu(self)
+            act_show = QAction("显示启动器", self)
+            act_show.triggered.connect(self._show_window)
+            menu.addAction(act_show)
+            act_min = QAction("缩到任务栏", self)
+            act_min.triggered.connect(self._minimize_to_taskbar)
+            menu.addAction(act_min)
+            act_hide = QAction("隐藏到托盘（不占任务栏）", self)
+            act_hide.triggered.connect(self._hide_to_tray)
+            menu.addAction(act_hide)
+            menu.addSeparator()
+            act_quit = QAction("退出启动器", self)
+            act_quit.triggered.connect(self._quit)
+            menu.addAction(act_quit)
+            self.tray.setContextMenu(menu)
+            self.tray.activated.connect(self._on_tray_activated)
+            self.tray.show()
+            self._tray_ok = True
+            self.say("点『—』或『✕』= 缩到任务栏（任务栏按钮可点回）；"
+                     "托盘右键可退出、或选『隐藏到托盘』完全不占任务栏。")
+        except Exception as e:
+            self.say(f"系统托盘初始化失败，『✕』将正常关闭启动器: {e}")
+
+    def _minimize_to_taskbar(self):
+        """缩到任务栏：最小化成任务栏按钮，不 hide，随时能点回来。"""
+        self.showMinimized()
+        if not self._tray_hint_shown:
+            self._tray_hint_shown = True
+            try:
+                self.tray.showMessage(
+                    "WT HUD 启动器",
+                    "已缩到任务栏：点任务栏按钮或双击托盘图标恢复。"
+                    "托盘右键可退出（HUD 继续运行）。",
+                    QSystemTrayIcon.Information, 4000)
+            except Exception:
+                pass
+        self.say("已缩到任务栏（HUD 继续运行）")
+
+    def _hide_to_tray(self):
+        """完全隐藏到托盘（仅托盘菜单主动选择时才用）。"""
+        if not self._tray_ok:
+            self._minimize_to_taskbar()
+            return
+        self.hide()
+        try:
+            self.tray.showMessage(
+                "WT HUD 启动器",
+                "已隐藏到托盘。双击图标恢复，右键可退出（HUD 继续运行）。",
+                QSystemTrayIcon.Information, 4000)
+        except Exception:
+            pass
+        self.say("已隐藏到托盘（HUD 继续运行）")
+
+    def _show_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._show_window()
+
+    def _quit(self):
+        """托盘菜单『退出启动器』：只关启动器，不停止正在运行的 HUD。"""
+        self._really_quit = True
+        try:
+            self.tray.hide()
+        except Exception:
+            pass
+        QApplication.instance().quit()
+
+    def closeEvent(self, event):
+        """点『✕』= 缩到任务栏（保留任务栏按钮），不再 hide 到托盘。
+
+        托盘不可用时没有「退出」入口，所以退化为正常关闭，避免窗口关不掉。
+        """
+        if self._really_quit or not self._tray_ok:
+            event.accept()
+            return
+        event.ignore()
+        self._minimize_to_taskbar()
+
+
+def _install_crash_log():
+    """pythonw 无控制台：把 stdout/stderr 与未捕获异常写进 wt_gui_error.log。
+
+    VBS 启动器在 GUI 崩溃时会读这个日志弹窗，避免又出现「只看到
+    Launcher exited with an error.」却查不到 traceback 的情况。
+    """
+    path = os.path.join(HERE, "wt_gui_error.log")
+    try:
+        f = open(path, "w", encoding="utf-8", errors="replace")
+    except Exception:
+        return
+    if getattr(sys, "stdout", None) is None:
+        sys.stdout = f
+    if getattr(sys, "stderr", None) is None:
+        sys.stderr = f
+
+    def hook(exc_type, exc_value, exc_tb):
+        traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+        f.flush()
+    sys.excepthook = hook
+
 
 def main():
+    _install_crash_log()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    # 任务栏按钮 / 托盘共用图标：默认 pythonw 蟒蛇图标缩到任务栏后认不出来
+    app.setWindowIcon(make_hud_icon())
     w = Launcher()
     w.show()
+    # 只有托盘可用时才禁止「关掉最后一个窗口即退出」：托盘不可用时保持
+    # Qt 默认行为，关闭窗口就正常结束进程，不会留下无窗口的僵尸进程。
+    if w._tray_ok:
+        app.setQuitOnLastWindowClosed(False)
     sys.exit(app.exec_())
 
 
