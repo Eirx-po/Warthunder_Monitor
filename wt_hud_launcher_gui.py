@@ -20,7 +20,7 @@ import time
 import traceback
 import urllib.request
 
-from PyQt5.QtCore import Qt, QTimer, QEvent, QSettings
+from PyQt5.QtCore import Qt, QTimer, QEvent, QSettings, QThread, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QIcon, QPixmap, QPainter
 from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox,
                              QDoubleSpinBox, QFormLayout, QGroupBox,
@@ -116,7 +116,9 @@ def fetch_indicators():
     try:
         req = urllib.request.Request("http://localhost:8111/indicators",
                                      headers={"User-Agent": "WT-Launcher"})
-        with urllib.request.urlopen(req, timeout=1.5) as r:
+        # localhost 正常响应在几十毫秒内；超时给 0.4s 足够，
+        # 原来是 1.5s，接口不通时每轮都要干等满（实测 1513ms/次）。
+        with urllib.request.urlopen(req, timeout=0.4) as r:
             return json.loads(r.read().decode("utf-8", "replace"))
     except Exception:
         return None
@@ -221,6 +223,38 @@ def game_running():
         return is_war_thunder_running()
     except Exception:
         return True
+
+
+class PollWorker(QThread):
+    """后台轮询 8111 / PID 文件 / 游戏进程。
+
+    ⚠ 这些 IO 绝不能放在主线程：8111 不通时 urlopen 会等满超时
+    （原实现 1.5s，实测 1513ms/次），每秒一次同步调用让 GUI 几乎
+    一直冻结。这里在子线程采集，结果用信号排队交给主线程，
+    只有主线程会碰 QWidget（Qt 的硬性要求）。
+    """
+    result = pyqtSignal(object)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._running = True
+
+    def stop(self):
+        self._running = False
+
+    def run(self):
+        while self._running:
+            ind = fetch_indicators()
+            pids = hud_pids()
+            running = game_running() if ind is None else True
+            if not self._running:
+                return
+            self.result.emit({"ind": ind, "pids": pids, "running": running})
+            # 每秒一轮；分段短睡，退出时能立刻响应，不必等满一轮
+            for _ in range(10):
+                if not self._running:
+                    return
+                self.msleep(100)
 
 
 class Launcher(QMainWindow):
@@ -434,22 +468,34 @@ class Launcher(QMainWindow):
 
         self.say("启动器就绪。游戏需在窗口化/无边框模式下才能看到 HUD。")
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.refresh)
-        self.timer.start(1000)
-        # PID 扫描走 PowerShell（外部进程），不能每秒都拉：
-        # 缓存 3 秒，状态文字照样每秒更新
-        self._pids_cache = []
-        self._pids_ts = 0.0
-        self.refresh()
+        # 状态采集全部交给后台线程；主线程只接信号更新 UI
+        self._ui_cache = {}
+        self.worker = PollWorker(self)
+        self.worker.result.connect(self._on_poll)
         self._init_tray()
+        self.worker.start()
 
-    def _cached_hud_pids(self, max_age=3.0):
-        now = time.time()
-        if now - self._pids_ts >= max_age:
-            self._pids_cache = hud_pids()
-            self._pids_ts = now
-        return self._pids_cache
+    def stop_worker(self):
+        """退出前停掉后台线程，避免 QThread 销毁时仍在运行而崩溃。"""
+        try:
+            self.worker.stop()
+            self.worker.wait(2000)
+        except Exception:
+            pass
+
+    def _set_status(self, label, text, color):
+        """只在文本/颜色真的变化时更新控件。
+
+        原来每秒无条件 setText + setStyleSheet 共 8 次，Qt 每收到一次
+        setStyleSheet 都要重新解析并 polish 整棵控件树，纯属白烧 CPU。
+        现在常态下只是几次字典比较。
+        """
+        key = id(label)
+        if self._ui_cache.get(key) == (text, color):
+            return
+        label.setText(text)
+        label.setStyleSheet(f"color: {color}")
+        self._ui_cache[key] = (text, color)
 
     def say(self, msg):
         ts = time.strftime("%H:%M:%S")
@@ -748,40 +794,36 @@ class Launcher(QMainWindow):
             self.say(f"打开失败: {e}")
 
     # ---- 刷新 ----
-    def refresh(self):
-        ind = fetch_indicators()
+    def _on_poll(self, snap):
+        """主线程槽：只更新 UI，不做任何网络 / 进程 IO。"""
+        ind = snap.get("ind")
+        pids = snap.get("pids") or []
+        running = snap.get("running", True)
+
         if ind is None:
             # 8111 不可达 ≠ 游戏没开（刚启动时接口还没起来），用进程检测区分
-            if game_running():
-                self.lb_game.setText("游戏: 进程已运行，等待 8111 接口…")
-                self.lb_game.setStyleSheet(f"color: {AMBER.name()}")
+            if running:
+                self._set_status(self.lb_game, "游戏: 进程已运行，等待 8111 接口…", AMBER.name())
             else:
-                self.lb_game.setText("游戏: 未运行")
-                self.lb_game.setStyleSheet(f"color: {MUTED.name()}")
-            self.lb_mode.setText("模式: —")
-            self.lb_mode.setStyleSheet(f"color: {MUTED.name()}")
+                self._set_status(self.lb_game, "游戏: 未运行", MUTED.name())
+            self._set_status(self.lb_mode, "模式: —", MUTED.name())
         elif not ind.get("valid", False):
-            self.lb_game.setText("游戏: 运行中，但不在战斗（机库/菜单）")
-            self.lb_game.setStyleSheet(f"color: {AMBER.name()}")
-            self.lb_mode.setText("模式: —")
-            self.lb_mode.setStyleSheet(f"color: {MUTED.name()}")
+            self._set_status(self.lb_game, "游戏: 运行中，但不在战斗（机库/菜单）", AMBER.name())
+            self._set_status(self.lb_mode, "模式: —", MUTED.name())
         else:
             vtype = ind.get("type", "?")
             # 模式判定复用守护进程的实现，不在这里另写一份
             _mode, desc = detect_mode(ind)
-            self.lb_game.setText(f"游戏: 战斗中  {vtype}")
-            self.lb_game.setStyleSheet(f"color: {GREEN.name()}")
+            self._set_status(self.lb_game, f"游戏: 战斗中  {vtype}", GREEN.name())
             # desc 已含中文模式名（如"空战（f_16xl）"），不要再拼一次
-            self.lb_mode.setText(f"模式: {desc}")
-            self.lb_mode.setStyleSheet(f"color: {GREEN.name()}")
+            self._set_status(self.lb_mode, f"模式: {desc}", GREEN.name())
 
-        pids = self._cached_hud_pids()
         if pids:
-            self.lb_hud.setText(f"HUD: 运行中 (PID {', '.join(map(str, pids))})")
-            self.lb_hud.setStyleSheet(f"color: {GREEN.name()}")
+            self._set_status(self.lb_hud,
+                             f"HUD: 运行中 (PID {', '.join(map(str, pids))})",
+                             GREEN.name())
         else:
-            self.lb_hud.setText("HUD: 未运行")
-            self.lb_hud.setStyleSheet(f"color: {RED.name()}")
+            self._set_status(self.lb_hud, "HUD: 未运行", RED.name())
 
     # ---- 缩到任务栏（主）+ 系统托盘（辅）----
     def _init_tray(self):
@@ -946,6 +988,8 @@ def main():
     app.setWindowIcon(make_hud_icon())
     w = Launcher()
     w.show()
+    # 无论从托盘退出还是直接关窗，都先停后台采集线程
+    app.aboutToQuit.connect(w.stop_worker)
     # 只有托盘可用时才禁止「关掉最后一个窗口即退出」：托盘不可用时保持
     # Qt 默认行为，关闭窗口就正常结束进程，不会留下无窗口的僵尸进程。
     if w._tray_ok:
