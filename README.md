@@ -94,6 +94,12 @@ Threat list, ground targets, and detailed flight data are all off by default —
 
 ### 布局配置 `wt_air_hud\hud_layout_air.json` / `hud_layout_ground.json` / Layout config
 
+> **陆战注意**：游戏自带小地图实测在**右下角**，所以 `hud_layout_ground.json` 把
+> 「战场态势」(`target`) 放在**左上**、与「载具状态」上下堆叠（`pos.target=[15,190]`）。
+> 不要改回 `BR`，否则面板会正好压住小地图（2026-11-08 修）。
+> Ground battles: the game minimap sits bottom-right, so the TARGET panel stacks
+> under the vehicle panel at top-left. Do not move it back to `BR`.
+
 ```jsonc
 {
   "flight": "BL",            // TL/TR/BL/BR/OFF

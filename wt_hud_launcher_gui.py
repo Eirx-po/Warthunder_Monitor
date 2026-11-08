@@ -672,16 +672,25 @@ class Launcher(QMainWindow):
             if isinstance(f, str) and f.strip():
                 self.cmb_font.setCurrentText(f.strip())
 
-        # 两个面板都用绝对坐标定位；没配过就按屏幕分辨率给"角落默认值"
+        # 两个面板都用绝对坐标定位；没配过就按「配置文件里的角落代号」换算默认像素。
+        # ⚠ 不要写死 "BR"：陆战小地图在右下，布局已把 target 挪到 TL；
+        #    这里若仍按 BR 显示，用户一点「保存布局设置」就会把面板写回右下挡住地图。
         pcfg = cfg.get("pos") if isinstance(cfg.get("pos"), dict) else {}
-        for key, sx, sy, corner in (("flight", self.sp_fx, self.sp_fy, "TL"),
-                                    ("target", self.sp_tx, self.sp_ty, "BR")):
+        for key, sx, sy, fallback in (("flight", self.sp_fx, self.sp_fy, "TL"),
+                                      ("target", self.sp_tx, self.sp_ty, "BR")):
+            corner = str(cfg.get(key, fallback) or fallback).upper()
+            if corner not in ("TL", "TR", "BL", "BR"):
+                corner = fallback
             pv = pcfg.get(key)
             if isinstance(pv, list) and len(pv) >= 2:
                 sx.setValue(int(pv[0]))
                 sy.setValue(int(pv[1]))
             else:
                 dx, dy = self._default_pos(corner)
+                # 同角落上下堆叠：与渲染端 panel_pos 的 _stack_used 逻辑保持一致，
+                # 避免 target 与 flight 都落在 (15,15) 而重叠。
+                if key == "target" and corner == str(cfg.get("flight", "TL") or "TL").upper():
+                    dy += int(160 * float(ui.get("scale", 1.0) or 1.0)) + 8
                 sx.setValue(dx)
                 sy.setValue(dy)
 

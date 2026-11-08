@@ -232,12 +232,14 @@ class HudOverlay(QWidget):
     WHITE = QColor(226, 232, 240)
     MUTED = QColor(136, 136, 128)
 
-    # ---- 布局配置：与空战 HUD 共用 hud_layout.json 的语义 ----
-    # 载具状态(flight) 默认左上，战场态势(target) 默认右下。
+    # ---- 布局配置：与空战 HUD 共用布局文件的语义 ----
+    # 陆战实测：游戏自带小地图在**右下角**。旧配置把战场态势(target) 也放 BR，
+    # 面板会直接压住小地图（2026-11-08 修）。现在两块面板都放左上、上下堆叠，
+    # 右下整块留给小地图；具体坐标由 hud_layout_ground.json 的 pos.target 给定。
     # 支持：角落代号 TL/TR/BL/BR/OFF、偏移 offset、绝对坐标 pos、单面板缩放 panel_scale。
     # ⚠ 之前这两块位置是写死的（15,15 和 sw-255,sh-175），GUI 里改 TARGET 坐标对陆战无效，
-    #    现在统一读 hud_layout.json，启动器「面板位置」设置对陆战/空战都生效。
-    DEFAULT_LAYOUT = {"flight": "TL", "target": "BR",
+    #    现在统一读布局文件，启动器「面板位置」设置对陆战/空战都生效。
+    DEFAULT_LAYOUT = {"flight": "TL", "target": "TL",
                       "combat": "OFF", "engine": "OFF", "threat": "OFF"}
     DEFAULT_OFFSETS = {}
     DEFAULT_POSES = {}
