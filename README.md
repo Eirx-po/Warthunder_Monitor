@@ -15,17 +15,17 @@ All data comes from the game client's built-in local HTTP service **`localhost:8
 
 | 项 / Item | 要求 / Requirement |
 |---|---|
-| Python | **必须**用 `C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe`（PyQt5 装在这里，换解释器会 `ImportError`）<br>**Must** be the managed 3.13.12 interpreter (PyQt5 lives in its site-packages; other interpreters fail with `ImportError`) |
-| PyQt5 | 5.15.x。环境被重置后重装：`python -m pip install PyQt5 --no-cache-dir`<br>Reinstall if the environment gets reset: `python -m pip install PyQt5 --no-cache-dir` |
+| Python | **必须**用工作区虚拟环境 `J:\Quant\.venv_wt\Scripts\python.exe`；GUI 用同目录的 `pythonw.exe`（无控制台）。受管 Python 的 site-packages 会被环境重置周期性清空，别用它<br>**Must** use the workspace venv `J:\Quant\.venv_wt\Scripts\python.exe` (GUI uses `pythonw.exe`, no console). The managed interpreter's site-packages gets wiped periodically — do not use it |
+| PyQt5 | 5.15.x，装在 `.venv_wt`。重建 venv 后：`J:\Quant\.venv_wt\Scripts\python.exe -m pip install PyQt5`<br>Installed in `.venv_wt`; reinstall with the venv python after recreating it |
 | 游戏 / Game | 运行中且 8111 端口可用；窗口化/无边框<br>Running with port 8111 alive; windowed / borderless |
 
 ---
 
 ## 快速开始 / Quick Start
 
-推荐用法：**双击 `start_hud_gui.bat`，点「启动 HUD（自动识别载具）」**，之后不用管——
+推荐用法：**双击 `start_hud_gui.vbs`**（零 cmd 黑窗口），点「启动 HUD（自动识别载具）」，之后不用管——
 进战斗后守护进程按载具类型自动拉起空战或陆战 HUD，**游戏退出则自动收起**。
-Recommended: **double-click `start_hud_gui.bat`, click "Start HUD (auto-detect)"** —
+Recommended: **double-click `start_hud_gui.vbs`** (no console window), click "Start HUD (auto-detect)" —
 a daemon picks the air or ground HUD per vehicle and **clears it when the game exits**.
 
 > GUI 只有「启动 / 停止」两个按钮，**不区分空战陆战**——手动选模式容易选错，
@@ -33,16 +33,20 @@ a daemon picks the air or ground HUD per vehicle and **clears it when the game e
 
 | 双击运行 / Double-click | 打开的是 / What it opens | 说明 / Notes |
 |---|---|---|
-| `start_hud_gui.bat` | **启动器窗口**（推荐）/ **Launcher GUI** (recommended) | 状态显示 + 启停按钮 + **自动切换** + 布局设置<br>Status + start/stop + **auto-switch** + layout settings |
+| `start_hud_gui.vbs` | **启动器窗口**（推荐）/ **Launcher GUI** (recommended) | 状态显示 + 启停按钮 + **自动切换** + 布局设置；隐藏启动，**无 cmd 黑窗口**<br>Status + start/stop + **auto-switch** + layout; hidden start, **no console window** |
+| `start_hud_gui.bat` | 同上（兼容入口）/ same (compat) | 仅转发到 vbs；双击仍会短暂闪一下控制台<br>Only forwards to the vbs; flashes a console briefly |
 | `start_wt_hud.bat` | 守护模式 / Daemon mode | 无窗口，按载具自动切空战/陆战 HUD（`--watch`）<br>Headless; auto-switches air/ground HUD by vehicle (`--watch`) |
 | `start_power_curve.bat` | 动力曲线窗口 / Power-curve window | 独立工具，与 HUD 互不影响<br>Standalone tool; independent of the HUD |
 | `wt_air_hud\start_air_hud.bat` | 仅空战 HUD / Air HUD only | 直接拉起空战覆盖层<br>Launches the air overlay directly |
 
-命令行方式（等效于双击 bat）/ Command line (equivalent to the bat files):
+命令行方式（等效于双击 vbs）/ Command line (equivalent to double-clicking the vbs):
 
 ```
-C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe -u J:\Quant\wt_hud_launcher_gui.py
+J:\Quant\.venv_wt\Scripts\pythonw.exe -u J:\Quant\wt_hud_launcher_gui.py
 ```
+
+`pythonw.exe` 无控制台；要抓 traceback 就换 `python.exe` 并把输出重定向到 `wt_gui_error.log`。
+`pythonw.exe` has no console; use `python.exe` with output redirected to `wt_gui_error.log` to capture tracebacks.
 
 ---
 
@@ -54,7 +58,8 @@ J:\Quant\
 │   ├── main.py              入口 / Entry point
 │   ├── hud_overlay.py       覆盖层渲染（面板/箭头/警报）/ Overlay rendering (panels/arrows/alerts)
 │   ├── data_fetcher.py      8111 数据抓取 + 目标聚类 + Ps 计算 / Fetching + target clustering + Ps
-│   ├── hud_layout.json      布局配置（启动器可直接改）/ Layout config (editable via launcher)
+│   ├── hud_layout_air.json    空战布局配置（启动器可直接改）/ Air layout config
+│   ├── hud_layout_ground.json 陆战布局配置 / Ground layout config
 │   └── start_air_hud.bat
 ├── wt_hud_v2.py             陆战 HUD / Ground-battle HUD
 ├── wt_hud_launcher.py       守护启动器（命令行）/ Daemon launcher (CLI)
@@ -64,9 +69,7 @@ J:\Quant\
 ├── wt_foreground.py         前台检测（游戏进程 aces.exe）/ Foreground detection (aces.exe)
 ├── wt_power_curve.py        动力曲线记录器（独立工具）/ Power-curve recorder (standalone)
 ├── test_power_curve.py      动力曲线离线冒烟测试 / Offline smoke test for the curve tool
-├── start_*.bat              各类启动脚本 / Launcher scripts
-├── *.html                   8111 接口调研 / GitHub 项目调研报告
-│                            8111 API research / GitHub project survey reports
+├── start_*.bat / *.vbs      各类启动脚本 / Launcher scripts
 └── daily_stock_analyzer\    另一个独立项目（A股分析，见其内部说明）
                              Separate project (A-share market analysis; see its own docs)
 ```
@@ -89,7 +92,7 @@ J:\Quant\
 威胁列表、地面目标、详细飞行数据默认全关——设计原则是**极简，不重复游戏内已有读数**。
 Threat list, ground targets, and detailed flight data are all off by default — the design principle is **minimalism: never duplicate readouts the game already shows**.
 
-### 布局配置 `wt_air_hud\hud_layout.json` / Layout config
+### 布局配置 `wt_air_hud\hud_layout_air.json` / `hud_layout_ground.json` / Layout config
 
 ```jsonc
 {
@@ -153,9 +156,9 @@ red/blue air-target colors.
 | `WT_HUD_BOMB_GROUND` | BOMB 层是否含**敌方地面单位**（机场永远包含）<br>Whether the BOMB layer includes enemy ground units (airfields always included) | `1`；设 `0` 只留机场 |
 | `WT_HUD_BOMB` | BOMB ZONE 面板角落<br>BOMB ZONE panel corner | `BL`；`OFF`=不画面板（仍画箭头） |
 
-面板位置也能在 `wt_air_hud/hud_layout.json` 里用 `bomb`（角落）与 `pos.bomb` / `panel_scale.bomb` 精调；
+面板位置也能在 `wt_air_hud/hud_layout_air.json` 里用 `bomb`（角落）与 `pos.bomb` / `panel_scale.bomb` 精调；
 环境变量优先级最高。改完重启 HUD 生效。
-Panel position is also tunable in `wt_air_hud/hud_layout.json` via `bomb` (corner) and
+Panel position is also tunable in `wt_air_hud/hud_layout_air.json` via `bomb` (corner) and
 `pos.bomb` / `panel_scale.bomb`; env vars win. Restart the HUD to apply.
 
 ---
@@ -181,7 +184,7 @@ How to sample: **full-throttle climb** for the max-thrust curve, or **level flig
 离线冒烟测试（不需要游戏）/ Offline smoke test (no game required):
 
 ```
-python J:\Quant\test_power_curve.py
+J:\Quant\.venv_wt\Scripts\python.exe J:\Quant\test_power_curve.py
 ```
 
 5 组检查：窗口 show 不崩、坐标 int、四种数据形态重绘、X 轴循环、CSV 导出。
@@ -277,8 +280,8 @@ Status area (game detection / mode / HUD process) + buttons (air / ground / stop
 | 命令 / Command | 覆盖 / Coverage |
 |---|---|
 | `python test_power_curve.py` | 动力曲线（offscreen，无需游戏），5 组检查<br>Power curve (offscreen, no game), 5 checks |
-| `python test_arrows.py` | 边缘箭头布局 / Edge-arrow layout |
-| `python test_hud_layout.py` | 面板布局（离屏渲染 + 像素统计）<br>Panel layout (offscreen render + pixel stats) |
 
-> `test_arrows.py` / `test_hud_layout.py` 已随 2026-09-21 清理移入 `_trash_20260921\`，需要时拖回即可。
-> `test_arrows.py` / `test_hud_layout.py` were moved into `_trash_20260921\` during the 2026-09-21 cleanup; drag them back if needed.
+> 历史调研/调试脚本（`test_arrows.py`、`test_hud_layout.py`、8111 快照、旧截图与调研 html）已在 2026-11-08 清理，
+> 完整备份在 `.workbuddy\_trash_20260921_backup.zip`，需要时从压缩档取回。
+> Historical research/debug scripts were removed on 2026-11-08; a full backup is kept in
+> `.workbuddy\_trash_20260921_backup.zip`.
