@@ -33,12 +33,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def _resolve(*parts):
     """
-    解析脚本路径。
+    解析脚本路径（相对启动器所在的 J:\\Quant\\ 根目录）。
 
-    本启动器放在 J:\\Quant\\ 根目录，所以：
-      空战 HUD -> wt_air_hud\\hud_overlay.py
-      陆战 HUD -> wt_hud_v2.py
-    （早期版本误把 HERE 当成 wt_air_hud 目录，导致找 J:\\Quant\\hud_overlay.py 失败）
+    HUD 一律由守护进程按载具类型拉起，本启动器只负责拉起守护进程和动力曲线
+    工具，不再自己解析空战/陆战 HUD 脚本路径（见 start_auto / start_curve）。
     """
     p = os.path.normpath(os.path.join(HERE, *parts))
     if os.path.exists(p):
@@ -50,8 +48,6 @@ def _resolve(*parts):
     return p      # 都不存在就返回主路径，让调用方报错时能显示出来
 
 
-AIR_HUD = _resolve("wt_air_hud", "hud_overlay.py")
-GROUND_HUD = _resolve("wt_hud_v2.py")
 # 布局配置按"空战 / 陆战"拆成两个独立文件，路径由 self._layout_path() 决定（见下方）
 POWER_CURVE = _resolve("wt_power_curve.py")
 DAEMON = _resolve("wt_hud_launcher.py")   # 守护模式：按载具自动切换空战/陆战
@@ -236,7 +232,6 @@ class Launcher(QMainWindow):
         self._tray_ok = False
         self._allow_taskbar_minimize = False
         self.cb_tray_min = None
-        self.proc = None          # HUD 进程（受启停管理）
         self.tool_proc = None     # 独立工具进程（不与 HUD 联动）
         self.auto_proc = None     # 守护进程（自动切换模式）
 
@@ -483,31 +478,7 @@ class Launcher(QMainWindow):
         return env
 
     # ---- 控制 ----
-    def start(self, script):
-        # 手动指定模式 ⇒ 先退掉自动切换，否则守护进程会把 HUD 又换回去
-        self.stop_auto(silent=True)
-        self.stop(silent=True)
-        if not os.path.exists(script):
-            self.say(f"找不到脚本: {script}")
-            return
-        name = os.path.basename(script)
-        try:
-            flags = _spawn_flags()
-            self.proc = subprocess.Popen(
-                [PYTHON, "-u", script], cwd=os.path.dirname(script),
-                env=self.build_env(), creationflags=flags)
-            self.say(f"已启动 {name} (PID {self.proc.pid})")
-        except Exception as e:
-            self.say(f"启动失败: {e}")
-
     def stop(self, silent=False):
-        # 先停自己拉起的
-        if self.proc is not None and self.proc.poll() is None:
-            try:
-                self.proc.kill()
-            except Exception:
-                pass
-        self.proc = None
         # 自动切换也一并关掉：否则守护进程会立刻把 HUD 又拉起来，
         # 用户点了"停止 HUD"却看到它自己复活，很困惑
         self.stop_auto(silent=True)

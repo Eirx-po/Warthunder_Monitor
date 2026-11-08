@@ -18,7 +18,7 @@ from collections import deque
 
 from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtCore import Qt, QTimer, QRect, QPointF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF, QPixmap
+from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF
 
 from wt_common import (is_enemy_color, is_friend_color, norm180,
                        bearing_compass, heading_compass,
@@ -36,8 +36,6 @@ class DataThread(threading.Thread):
         self.data = {}
         self.lock = threading.Lock()
         self.running = True
-        self._map_image = None       # QImage 缓存
-        self._last_map_gen = None    # 地图版本，变化时重新下载
         # 目标聚类管理器：把 map_obj 中同一目标的重复记录合并成一个
         # （例如一个防空阵地 = 3门炮 + 1辆SPAA，坐标只差几米）
         self.target_mgr = TargetManager(cluster_radius_m=120.0,
@@ -82,22 +80,6 @@ class DataThread(threading.Thread):
         except Exception:
             return None
 
-    def fetch_map_image(self):
-        """下载 /map.img 并缓存为 QImage"""
-        try:
-            from PyQt5.QtGui import QImage
-            import io
-            req = urllib.request.Request(BASE + "/map.img", headers={"User-Agent": "WT-HUD"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = resp.read()
-            img = QImage()
-            img.loadFromData(data)
-            if not img.isNull():
-                self._map_image = img
-                print(f"[HUD] 地图图片已加载: {img.width()}x{img.height()}", flush=True)
-        except Exception as e:
-            print(f"[HUD] 地图图片下载失败: {e}", flush=True)
-
     def run(self):
         while self.running:
             try:
@@ -113,13 +95,6 @@ class DataThread(threading.Thread):
                 # 都依赖它。漏掉这行会抛 NameError: name 'span' is not defined，
                 # 数据线程直接死掉 → HUD 一直空白（2026-09-22 修）。
                 span = self.map_span(data["map_info"])
-
-                # 地图版本变化时重新下载底图
-                map_gen = mi.get("map_generation") if isinstance(mi, dict) else None
-                if map_gen is not None and map_gen != self._last_map_gen:
-                    self._last_map_gen = map_gen
-                    self.fetch_map_image()
-                data["map_image"] = self._map_image
 
                 # 解析
                 player = None
@@ -567,99 +542,6 @@ class HudOverlay(QWidget):
             p.drawRect(lx - tw // 2 - 3, ly - 8, tw + 6, 15)
             p.setPen(color)
             p.drawText(lx - tw // 2, ly + 3, label)
-
-    def draw_minimap(self, p, data):
-        """
-        敌方迷你地图：只显示敌方
-        - 游戏小地图视野内（距离 < GAME_VIEW_RADIUS）的敌人：游戏自己会显示，不画
-        - 视野外的敌人：HUD 补充标记
-        位置：左上角下方（战场态势面板下面），大小 260x260
-        注：避免与游戏内小地图（左下/右下角）重叠
-        """
-        player = data.get("player")
-        enemies = data.get("enemies", [])
-        map_image = data.get("map_image")
-
-        if not player:
-            return
-
-        size = 260
-        # 移到左上角下方，避开游戏小地图区域
-        x = 15
-        y = 190
-
-        # 游戏小地图视野半径（米）：此范围内的敌人游戏会显示，HUD 跳过
-        GAME_VIEW_RADIUS = 1000.0
-
-        # 底图（map.img 缩放到面板）
-        has_map = map_image is not None and not map_image.isNull()
-        if has_map:
-            p.drawPixmap(x, y, size, size, QPixmap.fromImage(map_image))
-        else:
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(20, 25, 35, 200))
-            p.drawRect(x, y, size, size)
-
-        # 暗化覆盖层：让敌人标记更醒目，底图仍然可见
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 130))
-        p.drawRect(x, y, size, size)
-
-        # 玩家居中
-        cx = x + size // 2
-        cy = y + size // 2
-        px, py = player["x"], player["y"]
-        scale = size  # 归一化坐标 1.0 = 面板大小（全图）
-
-        # 只画视野外的敌方（游戏小地图上没有的）
-        drawn = 0
-        for e in enemies:
-            dist = e.get("dist", 0)
-            if dist < GAME_VIEW_RADIUS:
-                continue  # 游戏小地图会显示，不重复
-
-            ex = cx + (e["x"] - px) * scale
-            ey = cy + (e["y"] - py) * scale
-            if ex < x - 8 or ex > x + size + 8 or ey < y - 8 or ey > y + size + 8:
-                continue  # 超出面板范围
-
-            # 敌方标记：飞机=橙色圆点，坦克=红色圆点
-            color = QColor(239, 159, 39) if e.get("kind") == "air" else QColor(226, 75, 74)
-            p.setBrush(color)
-            p.setPen(QColor(255, 255, 255))
-            r = 5 if e.get("kind") == "air" else 6
-            p.drawEllipse(QPointF(ex, ey), r, r)
-
-            # 距离标签（黑底白字确保可读）
-            label = f"{dist/1000:.1f}km"
-            fm = p.fontMetrics()
-            tw = fm.horizontalAdvance(label)
-            p.setBrush(QColor(0, 0, 0, 200))
-            p.setPen(Qt.NoPen)
-            p.drawRect(int(ex + 6), int(ey - 9), tw + 6, 14)
-            p.setPen(color)
-            p.setFont(QFont("Consolas", 8, QFont.Bold))
-            p.drawText(QPointF(ex + 9, ey + 3), label)
-            drawn += 1
-
-        # 玩家标记（黄色描白边，醒目）
-        p.setBrush(QColor(250, 200, 30))
-        p.setPen(QColor(255, 255, 255))
-        p.drawEllipse(QPointF(cx, cy), 5, 5)
-
-        # 玩家朝向指示（北字）
-        p.setPen(QColor(250, 200, 30))
-        p.setFont(QFont("Consolas", 8, QFont.Bold))
-        p.drawText(QPointF(cx - 4, cy - 10), "N")
-
-        # 面板边框 + 标题
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QColor(58, 58, 72, 180))
-        p.drawRect(x, y, size, size)
-        p.setPen(QColor(226, 232, 240))
-        p.setFont(QFont("Consolas", 8, QFont.Bold))
-        map_status = "MAP" if has_map else "NO MAP"
-        p.drawText(x + 6, y + 12, f"ENEMY MAP ({drawn}) {map_status}")
 
     def draw_threat_panel(self, p, x, y, data):
         w, h = 240, 160
