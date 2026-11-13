@@ -20,7 +20,7 @@ from collections import deque
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wt_common import (is_enemy_color, is_friend_color, norm180,
                        bearing_compass, heading_compass,
-                       TargetManager)
+                       TargetManager, battle_signals)
 
 BASE = "http://localhost:8111"
 EARTH_RADIUS_M = 6371000.0  # Earth radius in meters
@@ -220,6 +220,11 @@ class AirDataFetcher(threading.Thread):
                                       match_radius_m=600.0,
                                       smooth_alpha=0.35,
                                       ttl_s=3.0)
+        # 最近一次成功拿到非空 /map_obj.json 的时间戳。
+        # TARGET / BOMB ZONE 面板完全依赖它；接口返回空(200/size=0)时判「不可达」→ 隐藏。
+        # 单帧失败先不隐藏（2 秒宽限），避免面板来回闪烁。
+        self._last_map_ok_ts = 0.0
+        self.MAP_STALE_S = 2.0
         # Game mode: "AB" (arcade) / "RB" (realistic) / "SB" (sim) / "unknown"
         self.game_mode = "unknown"
         self._mode_samples = []  # count of visible enemies per sample
@@ -416,6 +421,18 @@ class AirDataFetcher(threading.Thread):
         except Exception:
             return None
 
+    def _mark_map_ok(self, data, mobj):
+        """标记目标数据是否可达。
+
+        /map_obj.json 返回空列表（含 HTTP 200 + 空 body）时，目标列表算不出来，
+        必须判「不可达」，让渲染端隐藏 TARGET / BOMB ZONE 而不是画空壳。
+        成功一次后给 MAP_STALE_S 宽限：单帧抓取失败不会让面板闪一下消失。
+        """
+        now = time.time()
+        if isinstance(mobj, list) and mobj:
+            self._last_map_ok_ts = now
+        data["map_ok"] = (now - self._last_map_ok_ts) < self.MAP_STALE_S
+
     def run(self):
         # 单帧异常绝不应杀死抓取线程：一旦线程退出，get_data() 永远返回旧数据，
         # HUD 会卡死 / 不显示，只能重启才恢复。把每帧工作包在 try/except 里，
@@ -423,6 +440,8 @@ class AirDataFetcher(threading.Thread):
         import traceback as _tb
         _err_log = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "wt_air_hud_fetch_error.log")
+        mission_cache = {}
+        last_mission_ts = 0.0
         while self.running:
             try:
                 data = {"ts": time.time(), "in_battle": False}
@@ -438,10 +457,22 @@ class AirDataFetcher(threading.Thread):
                 # /map_obj - all units on minimap
                 mobj = self.fetch("/map_obj.json")
                 data["map_obj"] = mobj if isinstance(mobj, list) else []
+                # 目标数据可达性：接口可能 HTTP 200 但返回空 body（机库/未开局），
+                # 此时不能把「算不出目标」误当成「附近没敌人」去画空壳面板。
+                self._mark_map_ok(data, mobj)
 
                 # /map_info - map coordinate system
                 mi = self.fetch("/map_info.json")
                 data["map_info"] = mi if isinstance(mi, dict) else {}
+
+                # /mission.json - status=running 是最稳的在局判据。
+                # 变化很慢，1s 节流一次（数据线程 10Hz，别每帧多一次 HTTP）
+                now = time.time()
+                if now - last_mission_ts >= 1.0:
+                    ms = self.fetch("/mission.json")
+                    mission_cache = ms if isinstance(ms, dict) else {}
+                    last_mission_ts = now
+                data["mission"] = mission_cache
 
                 # /hudmsg - events
                 try:
@@ -458,9 +489,11 @@ class AirDataFetcher(threading.Thread):
                 except Exception:
                     data["hudmsg"] = {}
 
-                # Determine if in battle
-                data["in_battle"] = (data["state"].get("valid", False) or
-                                     data["indicators"].get("valid", False))
+                # Determine if in battle —— 四路信号并集，避免空战/陆战互补
+                # 可用时把在局误判成机库，导致整屏 HUD 空白。
+                data["in_battle"] = battle_signals(
+                    data["indicators"], data["state"],
+                    data["mission"], data["map_info"])[0]
 
                 # Parse state data
                 self._parse_state(data)
@@ -481,6 +514,16 @@ class AirDataFetcher(threading.Thread):
                 except Exception:
                     pass
             time.sleep(0.1)  # 10Hz
+
+    def _g_extreme(self, which, cur):
+        """累计 G 极值。8111 新版不再提供 g_meter_max/min，只能自己记。"""
+        attr = "_g_max_seen" if which == "max" else "_g_min_seen"
+        prev = getattr(self, attr, None)
+        if prev is None:
+            prev = cur
+        val = max(prev, cur) if which == "max" else min(prev, cur)
+        setattr(self, attr, val)
+        return val
 
     def _parse_state(self, data):
         """Parse /state into structured flight data"""
@@ -537,13 +580,32 @@ class AirDataFetcher(threading.Thread):
 
         # Get position from indicators (compass, attitude)
         ind = data.get("indicators", {})
-        flight["compass"] = ind.get("compass", 0)
+        fixed_compass = ind.get("compass", 0)
+        if fixed_compass:
+            flight["compass"] = fixed_compass       # 老版 8111 才有；新版留空，见下
         flight["roll"] = ind.get("aviahorizon_roll", 0) or ind.get("bank", 0)
         flight["pitch"] = ind.get("aviahorizon_pitch", 0)
         flight["g_meter"] = ind.get("g_meter", 0)
         flight["g_max"] = ind.get("g_meter_max", 0)
         flight["g_min"] = ind.get("g_meter_min", 0)
-        flight["type"] = ind.get("type", "?")
+        flight["type"] = ind.get("type", "")
+
+        # ⚠ 2026-11-12 起 /indicators 恒返回 {"valid": false}（不给 compass /
+        #   attitude / g_meter / type 了）。以下用 /state 的读数顶上，避免
+        #   罗盘恒为 0 导致目标相对方位全错、姿态面板全静止。
+        if not flight.get("g_meter"):
+            flight["g_meter"] = s.get("Ny", 0) or 0
+        # 过载历史极值自己累计（8111 不再提供 g_meter_max/min）
+        g = flight["g_meter"]
+        flight["g_max"] = max(self._g_extreme("max", g), g)
+        flight["g_min"] = min(self._g_extreme("min", g), g)
+        # 航迹俯仰：Vy / TAS → asin，爬升为正，和 aviahorizon_pitch 同号
+        if not flight.get("pitch"):
+            tas_ms = (flight.get("tas") or 0) / 3.6
+            vy = flight.get("v_speed") or 0
+            if tas_ms > 1.0:
+                ratio = max(-1.0, min(1.0, vy / tas_ms))
+                flight["pitch"] = math.degrees(math.asin(ratio))
 
         data["flight"] = flight
 
@@ -611,6 +673,18 @@ class AirDataFetcher(threading.Thread):
                     enemies.append(unit)
                 elif is_friend:
                     allies.append(unit)
+
+        # ⚠ 新版 /indicators 已不返回 compass（整个接口只剩 valid:false）。
+        #   机头航向退化为「玩家自己在小地图上的速度矢量 dx/dy」反推，
+        #   否则 compass 恒为 0 → 所有目标的相对方位全部错
+        #   （和 2026-09 那次"方向全错"表现一样，但根因不同）。
+        #   dx/dy 为零（悬停/刚起飞）时沿用上一帧，避免指针乱跳。
+        if player:
+            pdx, pdy = player.get("dx", 0), player.get("dy", 0)
+            if abs(pdx) > 1e-6 or abs(pdy) > 1e-6:
+                self._last_compass = heading_compass(pdx, pdy)
+        if not flight.get("compass"):
+            flight["compass"] = getattr(self, "_last_compass", 0.0)
 
         # Calculate distance and bearing to enemies
         if player:

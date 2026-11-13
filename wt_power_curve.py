@@ -140,15 +140,16 @@ class CurveWin(QMainWindow):
 
     # ---- 采样 ----
     def tick(self):
-        ind = fetch_ind()
-        if not ind or not ind.get("valid", False):
-            self.lb.setText("未进入战斗（等待 8111 有效数据）")
-            return
-        self.vehicle = ind.get("type", "?")
-
+        # ⚠ 这是「/state 仪表数据可用」门禁，不是「是否在战斗」门禁：
+        #   功率/推力只存在于 /state，陆战该端点恒 {"valid": false}，
+        #   此时不该继续采出一堆 0 值样本（四路在局判据不适用于这里）。
+        #   空战 /indicators 恒 valid:false 且不给 type，型号拿不到就用通用名。
         s = fetch_state()
         if not s or not s.get("valid", False):
+            self.lb.setText("未进入战斗（等待 8111 有效数据）")
             return
+        ind = fetch_ind() or {}
+        self.vehicle = str(ind.get("type") or "").strip() or "unknown"
 
         thrust = 0.0
         power = 0.0

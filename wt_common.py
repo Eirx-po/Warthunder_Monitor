@@ -18,6 +18,61 @@ War Thunder 8111 HUD - 共享目标处理模块
 import math
 import time
 
+# ------------------------------------------------- 在局判据（四路信号并集）
+
+def battle_signals(indicators=None, state=None, mission=None, map_info=None):
+    """8111「是否在战斗中」的四路信号并集，返回 (in_battle, 命中的信号名列表)。
+
+    ⚠ 端点是按空战 / 陆战**互补可用**，不是被永久掏空（2026-11-13 实测）：
+      - 空战：/state valid=true + 完整气动仪表；/indicators 恒 {"valid": false}
+      - 陆战：/indicators valid=true（含 army/type 等 71 字段）；/state 恒 {"valid": false}
+      - /mission.json 的 status="running" 是社区公认最稳的在局判据
+      - /map_info.json 的 valid=true 表示地图已加载
+
+    只看其中一路会把在局误判成机库 → 守护反复停 HUD、面板显示「未在战斗中」。
+    四路任一有效即算在局；全部无效才判机库。集中放这里，避免守护 / GUI /
+    两个 HUD 各写一份走样。
+    """
+    sources = []
+    if isinstance(indicators, dict) and indicators.get("valid", False):
+        sources.append("indicators")
+    if isinstance(state, dict) and state.get("valid", False):
+        sources.append("state")
+    if isinstance(mission, dict) and \
+            str(mission.get("status", "") or "").lower() == "running":
+        sources.append("mission")
+    if isinstance(map_info, dict) and map_info.get("valid", False):
+        sources.append("map_info")
+    return bool(sources), sources
+
+
+# ------------------------------------------------- 目标数据可达性（面板显隐）
+
+def map_data_available(data, frame_stale_s=5.0):
+    """「目标 / 轰炸战区」数据是否可达，决定这两块面板该不该画。
+
+    8111 常出现 /state 正常、但 /map_obj.json 返回空(200 / size=0)、
+    /map_info.json 返回 {"valid": false} 的情况：战斗数据看着"在线"，
+    目标列表却根本算不出来，TARGET / BOMB ZONE 只会挂一块"无目标"空壳。
+    抓取线程会给出 map_ok（最近 2 秒内拿到过非空小地图对象）；
+    这里再校验整帧时间戳，防止数据线程卡死后旧面板一直留在屏幕上。
+
+    没有这两个字段的旧数据默认判为可达，保持向后兼容。
+    """
+    if not isinstance(data, dict):
+        return False
+    if not bool(data.get("map_ok", True)):
+        return False
+    try:
+        ts = float(data.get("ts", 0) or 0)
+    except (TypeError, ValueError):
+        ts = 0.0
+    # ts<=0 表示没有时间戳信息（离线测试 / 旧数据），跳过陈旧检查
+    if ts > 0 and (time.time() - ts) > frame_stale_s:
+        return False
+    return True
+
+
 # ---------------------------------------------------------------- 颜色工具
 
 def parse_color(c):

@@ -124,6 +124,40 @@ def fetch_indicators():
         return None
 
 
+def fetch_state():
+    """读 /state（空战完整、陆战恒 valid:false）"""
+    try:
+        req = urllib.request.Request("http://localhost:8111/state",
+                                     headers={"User-Agent": "WT-Launcher"})
+        with urllib.request.urlopen(req, timeout=0.4) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def fetch_json(path):
+    """读一个 8111 JSON 端点（四路在局判据里补上的两路）"""
+    try:
+        req = urllib.request.Request("http://localhost:8111" + path,
+                                     headers={"User-Agent": "WT-Launcher"})
+        with urllib.request.urlopen(req, timeout=0.4) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def fetch_mission():
+    """/mission.json —— status="running" 是最稳的在局判据"""
+    return fetch_json("/mission.json")
+
+
+def fetch_map_info():
+    """/map_info.json —— valid=true 表示地图已加载"""
+    return fetch_json("/map_info.json")
+
+
 # 需要匹配的 HUD 脚本（小写比较）
 HUD_SCRIPTS = ("hud_overlay.py", "wt_hud_v2.py")
 
@@ -210,10 +244,10 @@ def daemon_pids_scan():
     return _scan_pids(("wt_hud_launcher.py",))
 
 
-def detect_mode(ind):
+def detect_mode(ind, state=None, mission=None, map_info=None):
     """模式判定统一走 wt_hud_launcher，避免 GUI 里再复制一份（会走样）"""
     from wt_hud_launcher import detect_mode as _dm
-    return _dm(ind)
+    return _dm(ind, state, mission, map_info)
 
 
 def game_running():
@@ -245,11 +279,17 @@ class PollWorker(QThread):
     def run(self):
         while self._running:
             ind = fetch_indicators()
+            state = fetch_state()
+            mission = fetch_mission()
+            map_info = fetch_map_info()
             pids = hud_pids()
-            running = game_running() if ind is None else True
+            no_8111 = all(x is None for x in (ind, state, mission, map_info))
+            running = game_running() if no_8111 else True
             if not self._running:
                 return
-            self.result.emit({"ind": ind, "pids": pids, "running": running})
+            self.result.emit({"ind": ind, "state": state,
+                              "mission": mission, "map_info": map_info,
+                              "pids": pids, "running": running})
             # 每秒一轮；分段短睡，退出时能立刻响应，不必等满一轮
             for _ in range(10):
                 if not self._running:
@@ -799,24 +839,40 @@ class Launcher(QMainWindow):
         ind = snap.get("ind")
         pids = snap.get("pids") or []
         running = snap.get("running", True)
+        state = snap.get("state")
 
-        if ind is None:
+        mission = snap.get("mission")
+        map_info = snap.get("map_info")
+        # 四路并集：空战 /state 有效、陆战 /indicators 有效，
+        # 另有 /mission.json status=running 与 /map_info.json valid=true 两路兜底。
+        from wt_hud_launcher import battle_signals
+        in_battle, _sources = battle_signals(ind, state, mission, map_info)
+
+        if all(x is None for x in (ind, state, mission, map_info)):
             # 8111 不可达 ≠ 游戏没开（刚启动时接口还没起来），用进程检测区分
             if running:
                 self._set_status(self.lb_game, "游戏: 进程已运行，等待 8111 接口…", AMBER.name())
             else:
                 self._set_status(self.lb_game, "游戏: 未运行", MUTED.name())
             self._set_status(self.lb_mode, "模式: —", MUTED.name())
-        elif not ind.get("valid", False):
+        elif not in_battle:
             self._set_status(self.lb_game, "游戏: 运行中，但不在战斗（机库/菜单）", AMBER.name())
             self._set_status(self.lb_mode, "模式: —", MUTED.name())
         else:
-            vtype = ind.get("type", "?")
-            # 模式判定复用守护进程的实现，不在这里另写一份
-            _mode, desc = detect_mode(ind)
-            self._set_status(self.lb_game, f"游戏: 战斗中  {vtype}", GREEN.name())
-            # desc 已含中文模式名（如"空战（f_16xl）"），不要再拼一次
-            self._set_status(self.lb_mode, f"模式: {desc}", GREEN.name())
+            _mode, desc = detect_mode(ind, state, mission, map_info)
+            # 陆战 /indicators 完整带 type（如 tankModels/germ_kv_2_754r），
+            # 去掉前缀只留型号名；空战该字段不可读时才显示"型号不可读"。
+            vtype = (ind or {}).get("type", "") if isinstance(ind, dict) else ""
+            if "/" in vtype:
+                vtype = vtype.split("/")[-1]
+            if vtype and vtype not in ("?", "unknown"):
+                self._set_status(self.lb_game, f"游戏: 战斗中  {vtype}", GREEN.name())
+            else:
+                self._set_status(self.lb_game, "游戏: 战斗中（型号不可读）", GREEN.name())
+            # 在局但判不出空地时给琥珀色（保持现状，不是已识别的模式）
+            from wt_hud_launcher import MODE_UNKNOWN
+            color = AMBER.name() if _mode == MODE_UNKNOWN else GREEN.name()
+            self._set_status(self.lb_mode, f"模式: {desc}", color)
 
         if pids:
             self._set_status(self.lb_hud,

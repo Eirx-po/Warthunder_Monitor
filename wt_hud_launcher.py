@@ -36,6 +36,14 @@ except Exception:
 BASE = "http://localhost:8111"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# 四路在局判据放在 wt_common，守护 / GUI / 两个 HUD 共用一份，避免走样。
+# 守护可能被独立启动（cwd 不是项目目录），补一次 sys.path 兜底。
+try:
+    from wt_common import battle_signals
+except ImportError:
+    sys.path.insert(0, BASE_DIR)
+    from wt_common import battle_signals
+
 
 def _resolve_python():
     """挑一个带 PyQt5 的解释器：优先工作区内的持久 venv。
@@ -243,55 +251,125 @@ def kill_stray_huds():
     return n
 
 
-def check_8111():
-    """检查 8111 端口是否可达，返回 indicators"""
+def _get(path, timeout=1.0):
+    """读一个 8111 JSON 端点；不可达 / 非 dict 一律返回 None"""
     try:
-        req = urllib.request.Request(BASE + "/indicators", headers={"User-Agent": "Launcher"})
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
+        req = urllib.request.Request(BASE + path,
+                                     headers={"User-Agent": "Launcher"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            d = json.loads(resp.read().decode("utf-8", "replace"))
+        return d if isinstance(d, dict) else None
     except Exception:
         return None
 
 
-def detect_mode(ind):
-    """
-    根据 indicators 判断当前模式。
+def check_8111():
+    """检查 8111 端口是否可达，返回 /indicators（陆战完整、空战恒 valid:false）"""
+    return _get("/indicators", timeout=2)
+
+
+def check_mission():
+    """/mission.json —— status="running" 是公认最稳的「在局」判据"""
+    return _get("/mission.json")
+
+
+def check_map_info():
+    """/map_info.json —— valid=true 表示地图已加载"""
+    return _get("/map_info.json")
+
+
+def check_snapshot():
+    """一轮抓齐四路信号，避免各处各抓一遍"""
+    return {"ind": check_8111(),
+            "state": check_state(),
+            "mission": check_mission(),
+            "map_info": check_map_info()}
+
+
+# 飞机专有的 /state 仪表字段。坦克/舰船的 /state 里没有这些。
+# ⚠ 8111 端点按空战 / 陆战互补可用（2026-11-13 实测）：
+#   空战 /state 完整 + /indicators 恒 valid:false；陆战正好反过来。
+#   所以 /state 判不出空地时，还得靠 indicators 的 type/army 与另两路在局信号。
+AIR_STATE_KEYS = ("TAS, km/h", "IAS, km/h", "M", "AoA, deg", "Ny",
+                  "Vy, m/s", "RPM 1", "thrust 1, kgs", "pitch 1, deg",
+                  "prop 1, %", "compressor stage 1")
+
+
+def check_state():
+    """读 /state（本机仪表数据，空战完整、陆战恒 valid:false）"""
+    return _get("/state", timeout=2)
+
+
+def infer_mode_from_state(st):
+    """从 /state 字段推断空/地。返回 MODE_AIR / MODE_GROUND / None（判不出）"""
+    if not isinstance(st, dict) or not st.get("valid", False):
+        return None
+    keys = set(st.keys())
+    if keys & set(AIR_STATE_KEYS):
+        return MODE_AIR
+    # 字段太少（载入中/接口刚起来，只有 valid）→ 判不出，当成"保持现状"，
+    # 不要粗暴当成地面载具去启陆战 HUD
+    if len([k for k in keys if k not in ("valid",)]) < 3:
+        return None
+    # 有读数但一条飞行仪表都没有 → 地面/水面载具（坦克、舰船都走陆战 HUD）
+    return MODE_GROUND
+
+
+def detect_mode(ind, state=None, mission=None, map_info=None):
+    """判断当前模式。
+
+    在局判据 = 四路信号并集（见 wt_common.battle_signals）：
+      /indicators.valid、/state.valid、/mission.json status=running、
+      /map_info.json valid —— 任一为真即算在战斗；全假才判机库/菜单。
+    空地判据两级：
+      1) indicators 的 type 前缀 / army —— 陆战稳定可用，精确。
+      2) /state 的气动仪表字段 —— 空战 indicators 被架空时靠它区分。
 
     ⚠ 不能写「含 tank 就是陆战，否则一律空战」——
     舰船(shipModels)、直升机(helicopterModels)、以及载入过程中 type 还是
     "?" / 空字符串 的情况都会被误判成空战，导致 HUD 乱切。
-    现在按 type 前缀 + army 字段显式分类，认不出来就返回 MODE_UNKNOWN
-    （调用方据此保持现状、不切换）。
+    在局但判不出空地时返回 MODE_UNKNOWN（保持现状，不停 HUD 也不乱起）。
     """
-    if not ind:
+    if not any(isinstance(x, dict) and x for x in (ind, state, mission, map_info)):
         return MODE_NONE, "8111 端口不可达（游戏未运行）"
 
-    if not ind.get("valid", False):
+    # 必须先确认在局：机库里 indicators 可能残留上一局的 type/army，
+    # 直接拿它分类会误起 HUD。
+    in_battle, sources = battle_signals(ind, state, mission, map_info)
+    if not in_battle:
         return MODE_NONE, "游戏中但不在战斗（机库/菜单）"
 
+    ind = ind if isinstance(ind, dict) else {}
     army = str(ind.get("army", "") or "").lower()
     vtype = str(ind.get("type", "") or "").lower()
     # type 形如 "tankModels/us_t26e4_superpershing"，取前缀判断
     prefix = vtype.split("/")[0] if "/" in vtype else ""
 
-    # 载具还没载入完：type 可能是 "?" 或空
-    if vtype in ("", "?", "unknown") and not army:
-        return MODE_UNKNOWN, "载具信息载入中…"
+    # ---- 第一级：indicators 精确分类（陆战 / 老版本）----
+    if army or vtype not in ("", "?", "unknown"):
+        if prefix.startswith("tank") or army == "tank":
+            return MODE_GROUND, f"陆战（{vtype.split('/')[-1]}）"
 
-    # ---- 陆战 ----
-    if prefix.startswith("tank") or army == "tank":
-        return MODE_GROUND, f"陆战（{vtype.split('/')[-1]}）"
+        if prefix.startswith("aircraft") or prefix.startswith("plane") \
+                or prefix.startswith("helicopter") or army == "air":
+            return MODE_AIR, f"空战（{vtype.split('/')[-1] or vtype}）"
 
-    # ---- 空战 ----
-    if prefix.startswith("aircraft") or prefix.startswith("plane") \
-            or prefix.startswith("helicopter") or army == "air":
-        return MODE_AIR, f"空战（{vtype.split('/')[-1] or vtype}）"
+        # 海战：没有专门的 HUD，沿用陆战（同样基于 map_obj，能显示目标/方位）
+        if prefix.startswith("ship") or prefix.startswith("boat") or army == "ship":
+            return MODE_GROUND, f"海战（{vtype.split('/')[-1]}）→ 用陆战 HUD"
 
-    # ---- 海战：没有专门的 HUD，沿用陆战（同样基于 map_obj，能显示目标/方位）----
-    if prefix.startswith("ship") or prefix.startswith("boat") or army == "ship":
-        return MODE_GROUND, f"海战（{vtype.split('/')[-1]}）→ 用陆战 HUD"
+    # ---- 第二级：/state 仪表兜底 ----
+    guessed = infer_mode_from_state(state)
+    if guessed == MODE_AIR:
+        return MODE_AIR, "空战（检测到飞行仪表）"
+    if guessed == MODE_GROUND:
+        return MODE_GROUND, "陆战（无飞行仪表）"
 
-    return MODE_UNKNOWN, f"未知载具类型（{vtype or '空'}），保持当前 HUD"
+    if vtype and vtype not in ("", "?", "unknown"):
+        return MODE_UNKNOWN, f"未知载具类型（{vtype}），保持当前 HUD"
+    # 只有 mission / map_info 报「在局」时判不出空地：保持现状，
+    # 但把命中信号写进描述，日志里能看出为什么没切换。
+    return MODE_UNKNOWN, f"在局（{'+'.join(sources)}），载具类别载入中…"
 
 
 def launch_hud(script_path, label, proc_holder):
@@ -391,7 +469,11 @@ def run_watch():
 
     try:
         while True:
-            ind = check_8111()
+            # 四路信号一次抓齐：端点按空战/陆战互补可用，只看一路会误判机库
+            snap = check_snapshot()
+            ind, state = snap["ind"], snap["state"]
+            mission, map_info = snap["mission"], snap["map_info"]
+            any_resp = ind or state or mission or map_info
             # 心跳：证明本轮还活着（下一个守护/启动器都靠它分辨真假守护）
             write_heartbeat()
             # 单实例：pid 文件被**另一个活着的守护**接管 → 本实例安静退出，不跟它抢
@@ -402,11 +484,11 @@ def run_watch():
                     break
                 # 陈旧 PID（进程已死，或这个号被无关进程复用了）→ 重新接管
                 write_pid(PID_DAEMON, my_pid)
-            # 进程表 + 8111 双证据：任一有效即认为游戏还在，避免误杀 HUD
-            if not game_running(ind):
+            # 进程表 + 8111 双证据：四个端点任一有响应即认为游戏还在，避免误杀 HUD
+            if not (game_running(any_resp) or bool(any_resp)):
                 mode, desc = MODE_NONE, "游戏进程未运行，已收起 HUD"
             else:
-                mode, desc = detect_mode(ind)
+                mode, desc = detect_mode(ind, state, mission, map_info)
 
             # 认不出载具类型（载入中/新类型）：保持现状，不切换也不停 HUD
             if mode == MODE_UNKNOWN:
@@ -470,9 +552,10 @@ def main():
         run_watch()
         return
 
-    # 检查 8111
-    ind = check_8111()
-    mode, desc = detect_mode(ind)
+    # 检查 8111（四路信号并集）
+    snap = check_snapshot()
+    mode, desc = detect_mode(snap["ind"], snap["state"],
+                             snap["mission"], snap["map_info"])
 
     print(f"  8111 状态: {desc}")
     print()

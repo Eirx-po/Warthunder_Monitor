@@ -22,7 +22,8 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF
 
 from wt_common import (is_enemy_color, is_friend_color, norm180,
                        bearing_compass, heading_compass,
-                       TargetManager, layout_arrows)
+                       TargetManager, layout_arrows, map_data_available,
+                       battle_signals)
 from wt_foreground import is_war_thunder_foreground
 
 BASE = "http://localhost:8111"
@@ -42,6 +43,11 @@ class DataThread(threading.Thread):
                                         match_radius_m=400.0,
                                         smooth_alpha=0.35,
                                         ttl_s=3.0)
+        # 最近一次成功拿到非空 /map_obj.json 的时间戳。
+        # 战场态势(TARGET)面板完全依赖它；接口返回空时判「不可达」→ 隐藏面板。
+        # 单帧失败先不隐藏（2 秒宽限），避免面板闪烁。
+        self._last_map_ok_ts = 0.0
+        self.MAP_STALE_S = 2.0
 
     @staticmethod
     def map_span(mi):
@@ -80,16 +86,45 @@ class DataThread(threading.Thread):
         except Exception:
             return None
 
+    def _mark_map_ok(self, data, mobj):
+        """标记目标数据是否可达（/map_obj.json 空响应 = 不可达 → 隐藏战场态势面板）。
+
+        成功一次后给 MAP_STALE_S 宽限，避免单帧失败导致面板闪烁。
+        """
+        now = time.time()
+        if isinstance(mobj, list) and mobj:
+            self._last_map_ok_ts = now
+        data["map_ok"] = (now - self._last_map_ok_ts) < self.MAP_STALE_S
+
     def run(self):
+        mission_cache = {}
+        last_mission_ts = 0.0
         while self.running:
             try:
                 data = {"ts": time.time()}
+                # ⚠ 8111 四路信号互补：陆战 /indicators 完整（含 type/army），
+                #   空战 /state 完整；另有 /mission.json 与 /map_info.json 两路兜底。
+                #   只看一路会把在局误判成机库 → 面板显示「未在战斗中」。
                 ind = self.fetch("/indicators")
                 data["ind"] = ind if isinstance(ind, dict) else {}
+                st = self.fetch("/state")
+                data["state"] = st if isinstance(st, dict) else {}
                 mobj = self.fetch("/map_obj.json")
                 data["map_obj"] = mobj if isinstance(mobj, list) else []
+                # 目标数据可达性：HTTP 200 但空 body 也算「不可达」
+                self._mark_map_ok(data, mobj)
                 mi = self.fetch("/map_info.json")
                 data["map_info"] = mi if isinstance(mi, dict) else {}
+                # /mission.json 变化很慢，1s 节流一次即可（数据线程是 5Hz）
+                now = time.time()
+                if now - last_mission_ts >= 1.0:
+                    ms = self.fetch("/mission.json")
+                    mission_cache = ms if isinstance(ms, dict) else {}
+                    last_mission_ts = now
+                data["mission"] = mission_cache
+                data["in_battle"] = battle_signals(
+                    data["ind"], data["state"], data["mission"],
+                    data["map_info"])[0]
 
                 # ⚠ 必须在解析坐标之前算好：下面 dx_m/dy_m 与 target_mgr.map_span
                 # 都依赖它。漏掉这行会抛 NameError: name 'span' is not defined，
@@ -431,6 +466,8 @@ class HudOverlay(QWidget):
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
 
         data = self.data_thread.get_data()
+        # 目标数据不可达时隐藏「战场态势」面板与敌人方向箭头，不留空壳
+        map_ok = map_data_available(data)
 
         # 载具状态（flight）→ 默认左上；战场态势（target）→ 默认右下
         # 位置/缩放读 hud_layout.json，可在启动器 GUI「面板位置」里改（含 TARGET 绝对 X/Y）
@@ -444,13 +481,14 @@ class HudOverlay(QWidget):
 
         t_ps = float(self.pscales.get("target", s))
         tp = self.panel_pos("target", 240 * t_ps, 160 * t_ps)
-        if tp is not None:
+        if tp is not None and map_ok:
             self._draw_scaled(p, self.draw_threat_panel, tp[0], tp[1], data, t_ps)
 
-        # 底部中央：警报条
+        # 底部中央：警报条（来自 /state，与目标数据无关，始终保留）
         self.draw_alert_bar(p, data)
-        # 屏幕边缘：敌人方向指示箭头
-        self.draw_edge_arrows(p, data)
+        # 屏幕边缘：敌人方向指示箭头（目标不可达时不画）
+        if map_ok:
+            self.draw_edge_arrows(p, data)
 
     def draw_panel_bg(self, p, x, y, w, h):
         p.setBrush(self.PANEL_BG)
@@ -602,7 +640,13 @@ class HudOverlay(QWidget):
         p.drawText(x + 10, y + 18, "载具状态")
 
         ind = data.get("ind", {})
-        if not ind or not ind.get("valid", False):
+        st = data.get("state", {}) or {}
+        # 四路并集判在局：陆战 indicators.valid、空战 state.valid，
+        # 外加 mission.json status=running 与 map_info.json valid=true。
+        # 只看一路会把战斗误判成机库 → 整块面板写「未在战斗中」。
+        in_battle, _src = battle_signals(ind, st, data.get("mission"),
+                                         data.get("map_info"))
+        if not in_battle:
             p.setPen(self.MUTED)
             p.setFont(QFont("Microsoft YaHei", 9))
             p.drawText(x + 10, y + 40, "未在战斗中")
@@ -611,10 +655,13 @@ class HudOverlay(QWidget):
         p.setFont(QFont("Microsoft YaHei", 9))
         yy = y + 38
 
-        # 载具类型
-        vtype = ind.get("type", "?")
+        # 载具类型：陆战 /indicators 完整提供 type（tankModels/germ_kv_2_754r），
+        # 去掉前缀显示真实型号；只有空战该端点被架空时才落到「未知型号」。
+        vtype = str(ind.get("type", "") or "")
         if "/" in vtype:
             vtype = vtype.split("/")[-1]
+        if vtype in ("", "?", "unknown"):
+            vtype = "未知型号"
         p.setPen(self.WHITE)
         p.drawText(x + 10, yy, f"载具: {vtype}")
         yy += 20

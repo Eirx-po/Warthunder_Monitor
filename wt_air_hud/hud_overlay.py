@@ -30,7 +30,7 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPolygonF, QBrush
 from PyQt5.QtCore import QPoint
 
 from data_fetcher import AirDataFetcher
-from wt_common import layout_arrows
+from wt_common import layout_arrows, map_data_available
 from wt_foreground import is_war_thunder_foreground
 
 
@@ -362,6 +362,10 @@ class AirHudOverlay(QWidget):
         data["zones"] = data.get("zones") or []
         data["bomb_targets"] = data.get("bomb_targets") or []
 
+        # 目标数据源不可达（/map_obj.json 空、/map_info.json 失效、线程卡死）时，
+        # TARGET / BOMB ZONE 连空壳都不画，别在屏幕上挂"无目标"占位。
+        map_ok = map_data_available(data)
+
         # Wrap each panel in try/except so one failure doesn't kill all
         # 屏幕中央不显示内容（雷达/姿态仪），只保留四角面板。
         #
@@ -390,11 +394,14 @@ class AirHudOverlay(QWidget):
 
         specs = [
             ("flight", flight_fn, 240, flight_h),
-            ("target", self._draw_target_panel, 240, 155),
         ]
-        # 轰炸战区 BOMB 面板：仅当 BOMB 叠加层启用时绘制（默认 RB/SB 自动开）
-        if self.fetcher.bomb_zone_enabled():
-            specs.append(("bomb", self._draw_bomb_panel, 230, 150))
+        # TARGET / BOMB ZONE 只在目标数据可达时绘制；不可达直接隐藏整块面板
+        # （包括"无目标""无轰炸目标"的占位文字），而不是留一个空框在屏幕上。
+        if map_ok:
+            specs.append(("target", self._draw_target_panel, 240, 155))
+            # 轰炸战区 BOMB 面板：仅当 BOMB 叠加层启用时绘制（默认 RB/SB 自动开）
+            if self.fetcher.bomb_zone_enabled():
+                specs.append(("bomb", self._draw_bomb_panel, 230, 150))
         # UI 缩放：用 QPainter 变换实现，绘制代码仍用原始坐标，
         # 尺寸/字号/内部间距一起缩放，无需改动各绘制方法。
         # 定位(panel_pos)用缩放后尺寸，避免溢出或互相重叠。
@@ -409,10 +416,11 @@ class AirHudOverlay(QWidget):
             panels.append((fn, (p, pos[0], pos[1], data, ps)))
 
         panels.append((self._draw_alert_bar, (p, data)))
-        panels.append((self._draw_edge_arrows, (p, data)))
-        panels.append((self._draw_bomb_arrows, (p, data)))
+        if map_ok:
+            panels.append((self._draw_edge_arrows, (p, data)))
+            panels.append((self._draw_bomb_arrows, (p, data)))
 
-        if os.environ.get("WT_HUD_THREAT", "") == "1":
+        if map_ok and os.environ.get("WT_HUD_THREAT", "") == "1":
             # 威胁列表默认关。开启时若配置里没指定角落，放到右上（避开左上的飞行数据）
             pos = self.panel_pos("threat", 240, 200) or (self.sw - 255, 15)
             panels.insert(0, (self._draw_threat_panel, (p, pos[0], pos[1], data)))
