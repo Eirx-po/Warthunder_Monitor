@@ -28,6 +28,8 @@ from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox,
                              QPushButton, QSpinBox, QSystemTrayIcon,
                              QTextEdit, QVBoxLayout, QWidget)
 
+from wt_common import ensure_local_config
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -672,7 +674,8 @@ class Launcher(QMainWindow):
         """当前模式（空战 / 陆战）对应的布局配置文件路径"""
         name = ("hud_layout_air.json" if self.layout_mode == "air"
                 else "hud_layout_ground.json")
-        return os.path.join(HERE, "wt_air_hud", name)
+        # 本地布局是用户设置、不进版本库；文件缺失时从 *.example.json 模板生成
+        return ensure_local_config(os.path.join(HERE, "wt_air_hud", name))
 
     def _default_pos(self, corner):
         """把角落代号换算成默认像素坐标（面板约 255x175，边距 15）—— 与渲染端角落一致"""

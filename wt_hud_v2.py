@@ -23,7 +23,7 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPolygonF
 from wt_common import (is_enemy_color, is_friend_color, norm180,
                        bearing_compass, heading_compass,
                        TargetManager, layout_arrows, map_data_available,
-                       battle_signals)
+                       battle_signals, ensure_local_config)
 from wt_foreground import is_war_thunder_foreground
 
 BASE = "http://localhost:8111"
@@ -350,6 +350,7 @@ class HudOverlay(QWidget):
             #    导致 GUI 里改 TARGET 坐标对陆战完全无效。这里统一指过去，找不到再回退本地。
             here = os.path.dirname(os.path.abspath(__file__))
             cfg = os.path.join(here, "wt_air_hud", "hud_layout_ground.json")
+            cfg = ensure_local_config(cfg)   # 首次运行从 *.example.json 生成
             if not os.path.exists(cfg):
                 cfg = os.path.join(here, "hud_layout.json")
             if os.path.exists(cfg):

@@ -6,21 +6,59 @@ _workbuddy_local/
 # ---- WorkBuddy 项目数据（禁上传）/ WorkBuddy project data ----
 .workbuddy/
 
-# ---- 回收站 / 本地垃圾 / trash & junk ----
+# ---- 本地垃圾 / 系统临时文件 / OS & junk ----
 _trash_*/
 *.log
-*.pyc
-__pycache__/
+*.log.*
+*.pid
+*.tmp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
 wt8111_logs/
 
-# ---- 临时产物 / temp artifacts ----
-*.csv
-hud_capture*.png
-power_curve_*.csv
-*.tmp
+# ---- Python 缓存与构建产物 / caches & build output ----
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+output/
+snapshots/
+.venv/
+venv/
+.venv_wt/
 
-# PID 登记文件（运行时生成）/ runtime pid files
+# ---- 编辑器 / editors ----
+.vscode/
+.idea/
+
+# ---- 运行产物 / runtime artifacts ----
+*.csv
+*.db
+*.sqlite
+*.sqlite3
+*.dmp
+hud_capture*.png
+screenshot*.png
+power_curve_*.csv
+
+# ---- 守护 PID / 心跳 / daemon pid & heartbeat ----
 .wt_*
 
-# 本地持久虚拟环境（存 PyQt5，managed 环境会被重置清掉）/ local venv, do NOT upload
-.venv_wt/
+# ---- 本地布局设置（GUI 会改写，仓库只跟踪 *.example.json 模板）----
+# Local layout settings: only the templates are versioned; push never carries personal window positions.
+wt_air_hud/hud_layout_air.json
+wt_air_hud/hud_layout_ground.json
+
+# 提交/推送卫生：只 add 源码、启动脚本、测试与 *.example.json 模板；
+# 不要用 git add -A，运行产物应始终走上面的忽略规则。

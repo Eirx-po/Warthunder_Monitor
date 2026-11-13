@@ -30,7 +30,7 @@ from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPolygonF, QBrush
 from PyQt5.QtCore import QPoint
 
 from data_fetcher import AirDataFetcher
-from wt_common import layout_arrows, map_data_available
+from wt_common import layout_arrows, map_data_available, ensure_local_config
 from wt_foreground import is_war_thunder_foreground
 
 
@@ -113,6 +113,7 @@ class AirHudOverlay(QWidget):
         try:
             cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "hud_layout_air.json")
+            cfg = ensure_local_config(cfg)   # 首次运行从 *.example.json 生成
             if os.path.exists(cfg):
                 with open(cfg, "r", encoding="utf-8") as f:
                     data = json.load(f)

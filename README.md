@@ -58,8 +58,8 @@ J:\Quant\
 │   ├── main.py              入口 / Entry point
 │   ├── hud_overlay.py       覆盖层渲染（面板/箭头/警报）/ Overlay rendering (panels/arrows/alerts)
 │   ├── data_fetcher.py      8111 数据抓取 + 目标聚类 + Ps 计算 / Fetching + target clustering + Ps
-│   ├── hud_layout_air.json    空战布局配置（启动器可直接改）/ Air layout config
-│   ├── hud_layout_ground.json 陆战布局配置 / Ground layout config
+│   ├── hud_layout_air.example.json    空战布局模板 / Air layout template
+│   ├── hud_layout_ground.example.json 陆战布局模板 / Ground layout template
 │   └── start_air_hud.bat
 ├── wt_hud_v2.py             陆战 HUD / Ground-battle HUD
 ├── wt_hud_launcher.py       守护启动器（命令行）/ Daemon launcher (CLI)
@@ -99,6 +99,19 @@ Threat list, ground targets, and detailed flight data are all off by default —
 > 不要改回 `BR`，否则面板会正好压住小地图（2026-11-08 修）。
 > Ground battles: the game minimap sits bottom-right, so the TARGET panel stacks
 > under the vehicle panel at top-left. Do not move it back to `BR`.
+
+> **本地设置，不进版本库 / Local-only settings**：版本库只跟踪
+> `hud_layout_air.example.json` / `hud_layout_ground.example.json` 两个模板；首次启动（GUI 或两个 HUD）
+> 会自动把模板复制成同名的本地 `.json`。GUI「保存布局」改写的是本地文件，已被 `.gitignore` 忽略，
+> 因此调整窗口位置不会再产生 git 改动、也不会被 push 带上去。删掉本地文件即可恢复默认布局。
+> Only the templates are versioned; first run copies them to local `.json` files, which are git-ignored.
+
+### 提交 / 推送卫生 / Push hygiene
+
+运行产物（日志、PID/心跳、缓存、数据库、截图、`.venv_wt`、`.workbuddy`、A股项目）全部在
+`.gitignore` 中。提交时只 add 源码、启动脚本、离线测试与 `*.example.json` 模板，**不要用
+`git add -A`**；推送前用 `git status --short` 确认没有本地设置或调试产物混进来。
+Runtime artifacts are ignored; do not stage them or personal layout files.
 
 ```jsonc
 {

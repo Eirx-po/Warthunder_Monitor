@@ -16,7 +16,28 @@ War Thunder 8111 HUD - 共享目标处理模块
    → 用滞回（hysteresis）：进入隐藏要更近，退出隐藏要更远。
 """
 import math
+import os
+import shutil
 import time
+
+
+def ensure_local_config(path):
+    """首次运行时从版本库里的 *.example.json 模板生成本地配置文件。
+
+    布局 json 是用户本机设置（GUI「保存布局」会反复改写），只跟踪模板、不跟踪
+    本地文件，这样调窗口位置不会污染 git status / 提交。本地文件已存在时原样返回；
+    模板不存在或复制失败时静默跳过 —— 各 HUD 内部都有 DEFAULT_LAYOUT 兜底。
+    """
+    try:
+        if os.path.exists(path):
+            return path
+        template = (path[:-5] + ".example.json") if path.endswith(".json") else (path + ".example")
+        if os.path.exists(template):
+            shutil.copyfile(template, path)
+    except Exception:
+        pass
+    return path
+
 
 # ------------------------------------------------- 在局判据（四路信号并集）
 
