@@ -68,7 +68,7 @@ J:\Quant\
 │                            Shared: target clustering / color classification / arrow layout
 ├── wt_foreground.py         前台检测（游戏进程 aces.exe）/ Foreground detection (aces.exe)
 ├── wt_power_curve.py        动力曲线记录器（独立工具）/ Power-curve recorder (standalone)
-├── test_power_curve.py      动力曲线离线冒烟测试 / Offline smoke test for the curve tool
+├── _local_tests\            本地离线测试区（脚本 + 产物，git 忽略）/ Local tests (git-ignored)
 ├── start_*.bat / *.vbs      各类启动脚本 / Launcher scripts
 └── daily_stock_analyzer\    另一个独立项目（A股分析，见其内部说明）
                              Separate project (A-share market analysis; see its own docs)
@@ -109,9 +109,10 @@ Threat list, ground targets, and detailed flight data are all off by default —
 ### 提交 / 推送卫生 / Push hygiene
 
 运行产物（日志、PID/心跳、缓存、数据库、截图、`.venv_wt`、`.workbuddy`、A股项目）全部在
-`.gitignore` 中。提交时只 add 源码、启动脚本、离线测试与 `*.example.json` 模板，**不要用
-`git add -A`**；推送前用 `git status --short` 确认没有本地设置或调试产物混进来。
-Runtime artifacts are ignored; do not stage them or personal layout files.
+`.gitignore` 中；离线测试脚本及其产物集中在 `_local_tests/`，整个目录不入库。提交时只 add
+源码、启动脚本与 `*.example.json` 模板，**不要用 `git add -A`**；推送前用
+`git status --short` 确认没有本地设置或调试产物混进来。
+Runtime artifacts, the local test area `_local_tests/`, and personal layout files are never pushed.
 
 ```jsonc
 {
@@ -203,7 +204,7 @@ How to sample: **full-throttle climb** for the max-thrust curve, or **level flig
 离线冒烟测试（不需要游戏）/ Offline smoke test (no game required):
 
 ```
-J:\Quant\.venv_wt\Scripts\python.exe J:\Quant\test_power_curve.py
+J:\Quant\.venv_wt\Scripts\python.exe J:\Quant\_local_tests/test_power_curve.py
 ```
 
 5 组检查：窗口 show 不崩、坐标 int、四种数据形态重绘、X 轴循环、CSV 导出。
@@ -296,9 +297,14 @@ Status area (game detection / mode / HUD process) + buttons (air / ground / stop
 
 ## 测试 / Tests
 
+> 离线测试脚本统一放在本地目录 `_local_tests/`（`test_detect_mode.py`、
+> `test_map_unavailable.py`、`test_power_curve.py`），该目录已被 `.gitignore` 忽略、
+> **不随仓库分发**，clone 后没有这些脚本属正常现象；测试生成的 CSV 落在 `_local_tests/out/`。
+> Offline tests live in the git-ignored `_local_tests/` folder and are not distributed with the repo.
+
 | 命令 / Command | 覆盖 / Coverage |
 |---|---|
-| `python test_power_curve.py` | 动力曲线（offscreen，无需游戏），5 组检查<br>Power curve (offscreen, no game), 5 checks |
+| `python _local_tests/test_power_curve.py` | 动力曲线（offscreen，无需游戏），5 组检查<br>Power curve (offscreen, no game), 5 checks |
 
 > 历史调研/调试脚本（`test_arrows.py`、`test_hud_layout.py`、8111 快照、旧截图与调研 html）已在 2026-11-08 清理，
 > 完整备份在 `.workbuddy\_trash_20260921_backup.zip`，需要时从压缩档取回。

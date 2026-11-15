@@ -6,6 +6,10 @@ _workbuddy_local/
 # ---- WorkBuddy 项目数据（禁上传）/ WorkBuddy project data ----
 .workbuddy/
 
+# ---- 本地测试区：离线测试脚本 + 测试产物，全部不入库 ----
+# Local test area: offline test scripts and their generated files, never pushed.
+_local_tests/
+
 # ---- 本地垃圾 / 系统临时文件 / OS & junk ----
 _trash_*/
 *.log
