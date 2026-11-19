@@ -20,7 +20,7 @@ from collections import deque
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wt_common import (is_enemy_color, is_friend_color, norm180,
                        bearing_compass, heading_compass,
-                       TargetManager, battle_signals)
+                       TargetManager, battle_signals, AttitudeEstimator)
 
 BASE = "http://localhost:8111"
 EARTH_RADIUS_M = 6371000.0  # Earth radius in meters
@@ -207,6 +207,9 @@ class AirDataFetcher(threading.Thread):
         self._track_id_counter = 0
         self._tas_hist = deque(maxlen=40)   # (ts, tas_m/s) 供 Ps 计算
         self._ps_last = None
+        # 姿态统一入口：真实仪表优先，缺失时用 /state 估算（EST），
+        # 带置信度降级与 2s 保持。详见 wt_common.AttitudeEstimator。
+        self.attitude = AttitudeEstimator()
         # Track manager for RB mode (target tracking with lost prediction)
         self.track_manager = TrackManager()
         # 目标聚类管理器：合并 8111 中同一目标的重复记录，保证一个敌人一个箭头
@@ -498,8 +501,12 @@ class AirDataFetcher(threading.Thread):
                 # Parse state data
                 self._parse_state(data)
 
-                # Parse map objects
+                # Parse map objects（会补出 compass / 玩家航向）
                 self._parse_map_objects(data)
+
+                # 姿态估算：必须在 _parse_map_objects 之后，才能拿到
+                # map_obj dx/dy 反推的罗盘航向（用来估算坡度方向）。
+                self._update_attitude(data)
 
                 # Compute combat metrics
                 self._compute_metrics(data)
@@ -599,20 +606,43 @@ class AirDataFetcher(threading.Thread):
         g = flight["g_meter"]
         flight["g_max"] = max(self._g_extreme("max", g), g)
         flight["g_min"] = min(self._g_extreme("min", g), g)
-        # 航迹俯仰：Vy / TAS → asin，爬升为正，和 aviahorizon_pitch 同号
-        if not flight.get("pitch"):
-            tas_ms = (flight.get("tas") or 0) / 3.6
-            vy = flight.get("v_speed") or 0
-            if tas_ms > 1.0:
-                ratio = max(-1.0, min(1.0, vy / tas_ms))
-                flight["pitch"] = math.degrees(math.asin(ratio))
+        # ⚠ 俯仰角不再在这里用 asin(Vy/TAS) 兜底。
+        #   统一由 _update_attitude()（wt_common.AttitudeEstimator）产出：
+        #   gamma + AoA、指数平滑、置信度降级、EST 标识、2s 保持；
+        #   /indicators 有真实 aviahorizon_* 时优先用仪表值。
 
         data["flight"] = flight
+
+    def _update_attitude(self, data):
+        """姿态统一入口：把结果写进 data["att"]，并同步 flight 里的字段。
+
+        调用时机必须在 _parse_map_objects 之后 —— 本机罗盘航向是那里用
+        map_obj 玩家 dx/dy 反推的，坡度方向估算需要它。
+        """
+        flight = data.get("flight") or {}
+        compass = flight.get("compass")
+        if not compass:
+            # /state 无效时 flight 为 None，退回上一帧的罗盘航向
+            compass = getattr(self, "_last_compass", None)
+        att = self.attitude.update(
+            state=data.get("state"),
+            indicators=data.get("indicators"),
+            compass=compass,
+        )
+        data["att"] = att
+        if att["available"] and flight:
+            flight["pitch"] = att["pitch"]
+            flight["pitch_source"] = att["source"]
+            flight["att_label"] = att["label"]
+            flight["att_confidence"] = att["confidence"]
+            flight["roll_hint"] = att["roll_hint"]
 
     def _parse_map_objects(self, data):
         """Parse map_obj into structured unit data"""
         mobj = data.get("map_obj", [])
-        flight = data.get("flight", {})
+        # /state 无效时 _parse_state 会写 flight=None，这里必须归一化成 dict，
+        # 否则后面 flight.get("compass") 会抛 AttributeError 让整帧抓取失败。
+        flight = data.get("flight") or {}
 
         # Own position from /state (air battles have lat/lon)
         own_lat = None

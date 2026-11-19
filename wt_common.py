@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import time
+from collections import deque
 
 
 def ensure_local_config(path):
@@ -498,3 +499,160 @@ def layout_arrows(targets, sw, sh, margin=35, min_gap=40.0):
         a["y"] = max(margin * 0.5, min(sh - margin * 0.5, a["y"]))
 
     return placed
+
+
+# ---------------------------------------------------------------- EST 姿态估算
+#
+# 思路来自 unknown-obj/wt-map（其文档致谢 A-common-Chinese/WarThunder-8111-HUD）。
+# 游戏 2.59.0 之后 MiG-35 / JF-17 / Z-10A 等机型不再通过 /indicators 提供
+# aviahorizon_pitch / aviahorizon_roll / bank。空战 HUD 原本只有
+# pitch = asin(Vy / TAS)（航迹倾角），漏了迎角，也没标注这个数是估算的。
+#
+#   pitch = gamma + AoA，gamma = asin(Vy / (TAS/3.6))，指数平滑 tau=0.25s
+#   roll  = atan(V * dpsi/dt / g)，1.4s 窗口、±80° 限幅、<6° 归零
+#          —— 只给「左/右带杆」方向提示，不画数值、不画指针
+#   |Ny - 1| > 4 时机动过猛 → 置信度 0.35，标识 EST?
+# 无仪表且 /state 暂不可用时保持上一帧最多 2 秒，之后明确标 NO ATT，不编造姿态。
+
+class AttitudeEstimator:
+    """8111 姿态数据统一入口：真实仪表优先，缺失时用 /state 估算并标注来源。
+
+    update() 返回 dict:
+      pitch       俯仰角（度，爬升为正）
+      source      "instrument" / "est" / "none"
+      label       "" / "EST" / "EST?" / "NO ATT"
+      confidence  1.0 正常，0.35 低置信度
+      roll_hint   "" / "LEFT" / "RIGHT"（只有方向，没有坡度数值）
+      available   是否有可用姿态
+      hold        是否为「保持上一帧」的过渡结果
+    """
+    PITCH_TAU = 0.25
+    ROLL_WINDOW_S = 1.4
+    HOLD_S = 2.0
+    LOW_CONF = 0.35
+    G = 9.80665
+    _INST_KEYS = ("aviahorizon_pitch", "aviahorizon_roll", "bank")
+
+    def __init__(self, clock=None):
+        self._clock = clock or time.time
+        self.reset()
+
+    def reset(self):
+        self._pitch = None
+        self._last_ts = None
+        self._last_ok_ts = None
+        self._hdg_hist = deque()
+        self._last = self._empty()
+
+    @staticmethod
+    def _empty():
+        return {"pitch": 0.0, "source": "none", "label": "NO ATT",
+                "confidence": 0.0, "roll_hint": "", "available": False,
+                "hold": False}
+
+    @staticmethod
+    def _num(d, key, default=0.0):
+        try:
+            v = d.get(key, default)
+            if isinstance(v, bool):
+                return default
+            v = float(v)
+            return v if math.isfinite(v) else default
+        except (TypeError, ValueError, AttributeError):
+            return default
+
+    def _smooth(self, raw, now):
+        """一阶指数平滑 k = 1 - exp(-dt/tau)，对 10Hz/20Hz 都适用。"""
+        if self._pitch is None or self._last_ts is None:
+            self._pitch = raw
+        else:
+            dt = max(0.0, now - self._last_ts)
+            k = 1.0 - math.exp(-dt / self.PITCH_TAU)
+            self._pitch += (raw - self._pitch) * k
+        self._last_ts = now
+        return self._pitch
+
+    def _roll_hint(self, compass, tas_kmh, now):
+        """由航向变化率估算坡度方向；只返回 LEFT / RIGHT / ''，不给数值。"""
+        if compass is None or tas_kmh <= 1.0:
+            return ""
+        try:
+            hdg = float(compass) % 360.0
+        except (TypeError, ValueError):
+            return ""
+        hist = self._hdg_hist
+        hist.append((now, hdg))
+        while len(hist) > 2 and (now - hist[1][0]) > self.ROLL_WINDOW_S:
+            hist.popleft()
+        if len(hist) < 2:
+            return ""
+        t0, h0 = hist[0]
+        dt = now - t0
+        if dt < 0.15:
+            return ""
+        rate = math.radians(norm180(hdg - h0)) / dt
+        roll = math.degrees(math.atan((tas_kmh / 3.6) * rate / self.G))
+        roll = max(-80.0, min(80.0, roll))
+        if abs(roll) < 6.0:
+            return ""
+        return "RIGHT" if roll > 0 else "LEFT"
+
+    def _commit(self, now, pitch, source, confidence, label, roll_hint=""):
+        d = {"pitch": float(pitch), "source": source, "label": label,
+             "confidence": float(confidence), "roll_hint": roll_hint,
+             "available": True, "hold": False}
+        self._last = d
+        self._last_ok_ts = now
+        return d
+
+    def update(self, state=None, indicators=None, compass=None, now=None):
+        """喂一帧 8111 数据，返回姿态 dict。
+
+        state       /state（dict，valid=true 才有气动仪表）
+        indicators  /indicators（dict；只看有没有 aviahorizon_* / bank 字段，
+                    不看 valid —— 空战里这个接口恒 valid:false）
+        compass     本机罗盘航向（度），来自 indicators.compass 或 map_obj dx/dy
+        now         可注入时钟，便于离线测试
+        """
+        now = self._clock() if now is None else float(now)
+
+        # 1) 真实姿态仪优先：有任一姿态字段就直接用，不估算、不标 EST。
+        #    valid:false 表示接口整体失效（可能残留上一局字段）→ 不信任，改走 EST。
+        if isinstance(indicators, dict):
+            inst_ok = indicators.get("valid", True) is not False
+            has_inst = inst_ok and any(
+                isinstance(indicators.get(k), (int, float))
+                and not isinstance(indicators.get(k), bool)
+                for k in self._INST_KEYS
+            )
+            if has_inst:
+                pitch = self._num(indicators, "aviahorizon_pitch", 0.0)
+                self._pitch = None       # 仪表/估算互切时不要沿用旧平滑值
+                self._last_ts = None
+                return self._commit(now, pitch, "instrument", 1.0, "")
+
+        # 2) EST：/state 有效且空速足够。
+        if isinstance(state, dict) and state.get("valid", False):
+            tas = self._num(state, "TAS, km/h", 0.0)
+            v_ms = tas / 3.6
+            if v_ms > 1.0:
+                vy = self._num(state, "Vy, m/s", 0.0)
+                aoa = self._num(state, "AoA, deg", 0.0)
+                ny = self._num(state, "Ny", 1.0)
+                ratio = max(-1.0, min(1.0, vy / v_ms))
+                gamma = math.degrees(math.asin(ratio))
+                pitch = self._smooth(gamma + aoa, now)
+                conf = self.LOW_CONF if abs(ny - 1.0) > 4.0 else 1.0
+                label = "EST?" if conf < 0.6 else "EST"
+                hint = self._roll_hint(compass, tas, now)
+                return self._commit(now, pitch, "est", conf, label, hint)
+
+        # 3) 没有有效输入：2 秒内保持上一帧（防瞬时丢包 / 换载具闪烁），
+        #    超时后明确不可用，不编造姿态。
+        if self._last_ok_ts is not None and (now - self._last_ok_ts) <= self.HOLD_S:
+            held = dict(self._last)
+            held["hold"] = True
+            return held
+        if self._last.get("available") or self._last.get("hold"):
+            self.reset()
+        return dict(self._last)

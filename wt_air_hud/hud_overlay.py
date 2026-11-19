@@ -34,6 +34,21 @@ from wt_common import layout_arrows, map_data_available, ensure_local_config
 from wt_foreground import is_war_thunder_foreground
 
 
+def attitude_label(data):
+    """面板上应显示的姿态来源标识："" / "EST" / "EST?" / "NO ATT"。
+
+    抽成纯函数便于离线回归：offscreen 环境没有字体，drawText 不产生像素，
+    没法用截图断言文字，只能测这里的选择逻辑与绘制调用链。
+    """
+    if not isinstance(data, dict):
+        return ""
+    att = data.get("att") or {}
+    if not isinstance(att, dict):
+        return ""
+    label = att.get("label", "")
+    return label if isinstance(label, str) else ""
+
+
 class AirHudOverlay(QWidget):
     """Pure paintEvent transparent overlay for air combat"""
 
@@ -472,6 +487,25 @@ class AirHudOverlay(QWidget):
             p.setPen(QColor(50, 60, 80, 120))
             p.drawLine(x + 10, y + 22, x + w - 10, y + 22)
 
+    def _draw_att_label(self, p, x, y, w, data):
+        """标题栏右侧的姿态来源标识：EST / EST? / NO ATT。
+
+        默认极简面板不重复游戏内的姿态仪读数，只用一个小标签说明
+        「本机姿态是估算的」，避免把估算值当成仪表实测值。
+        """
+        label = attitude_label(data)
+        if not label:
+            return
+        if label == "EST?":
+            color = self.ORANGE
+        elif label == "EST":
+            color = self.YELLOW
+        else:
+            color = self.MUTED
+        p.setPen(color)
+        p.setFont(QFont(self.FONT_NAME, 8, QFont.Bold))
+        p.drawText(int(x + w - 62), int(y + 16), label)
+
     # 面板默认角落。飞行数据放左上，把右上角整块留给游戏小地图
     DEFAULT_LAYOUT = {
         "flight": "TL",
@@ -792,6 +826,7 @@ class AirHudOverlay(QWidget):
         """
         w, h = 240, 150
         self._draw_panel(p, x, y, w, h, "ENGINE / CLIMB")
+        self._draw_att_label(p, x, y, w, data)
 
         flight = data.get("flight")
         if not flight:
@@ -865,6 +900,7 @@ class AirHudOverlay(QWidget):
         """
         w, h = 240, 215
         self._draw_panel(p, x, y, w, h, "FLIGHT / COMBAT")
+        self._draw_att_label(p, x, y, w, data)
 
         flight = data.get("flight")
         metrics = data.get("metrics") or {}
@@ -907,11 +943,19 @@ class AirHudOverlay(QWidget):
         p.drawText(x + 124, yy + 10, f"VS {vs:+.1f}m/s")
         yy += 20
 
-        # 罗盘
+        # 罗盘 + 俯仰（EST 时标明是估算值）
         compass = flight.get("compass", 0)
         p.setPen(self.CYAN)
         p.setFont(QFont(self.FONT_NAME, 11, QFont.Bold))
         p.drawText(x + 10, yy + 10, f"HDG {compass:.0f}")
+        att = data.get("att") or {}
+        if isinstance(att, dict) and att.get("available"):
+            src = att.get("source", "")
+            p.setPen(self.CYAN if src == "instrument"
+                     else (self.ORANGE if att.get("label") == "EST?" else self.YELLOW))
+            p.setFont(QFont(self.FONT_NAME, 9))
+            p.drawText(int(x + 100), int(yy + 10),
+                       f"PITCH {att.get('pitch', 0):+.1f}d {att.get('label', '')}")
         yy += 20
 
         # 燃油条
@@ -975,6 +1019,14 @@ class AirHudOverlay(QWidget):
             status_parts.append(("ON SIX", self.RED))
         if metrics.get("lost_threat"):
             status_parts.append(("LOST-TRK", self.ORANGE))
+
+        # EST 坡度只有方向提示（不画数值、不画指针）
+        att2 = data.get("att") or {}
+        hint = att2.get("roll_hint", "") if isinstance(att2, dict) else ""
+        if hint:
+            p.setPen(self.ORANGE)
+            p.setFont(QFont(self.FONT_NAME, 9, QFont.Bold))
+            p.drawText(int(x + 124), int(yy + 10), f"BANK {hint}")
 
         if status_parts:
             p.setFont(QFont(self.FONT_NAME, 9, QFont.Bold))
@@ -1369,12 +1421,16 @@ class AirHudOverlay(QWidget):
             p.drawText(bx, by, bar_w, bar_h, Qt.AlignCenter, alert)
 
     def _draw_attitude(self, p, x, y, data):
-        """Simple attitude indicator"""
+        """Simple attitude indicator（当前默认不调用；保留给需要姿态仪的场合）"""
         flight = data.get("flight", {})
         if not flight:
             return
 
-        roll = flight.get("roll", 0)
+        att = data.get("att") or {}
+        conf = att.get("confidence", 1.0) if isinstance(att, dict) else 1.0
+        label = att.get("label", "") if isinstance(att, dict) else ""
+        # 低置信度时坡度估算不可信：地平线不旋转、也不画坡度指针。
+        roll = flight.get("roll", 0) if conf >= 0.6 else 0.0
         pitch = flight.get("pitch", 0)
         r = 50
 
@@ -1424,16 +1480,21 @@ class AirHudOverlay(QWidget):
         # Roll indicator
         p.setPen(QPen(self.WHITE, 1))
         p.drawArc(x + r - r, y + r - r, r * 2, r * 2, 30 * 16, 120 * 16)
-        # Roll pointer
-        roll_rad = math.radians(-roll)
-        px = int(x + r + (r - 3) * math.sin(roll_rad))
-        py = int(y + r - (r - 3) * math.cos(roll_rad))
-        p.setBrush(self.WHITE)
-        p.drawPolygon(QPolygonF([
-            QPoint(px, py - 3),
-            QPoint(px + 3, py + 2),
-            QPoint(px - 3, py + 2),
-        ]))
+        # Roll pointer（低置信度估算不画，只给方向提示）
+        if conf >= 0.6:
+            roll_rad = math.radians(-roll)
+            px = int(x + r + (r - 3) * math.sin(roll_rad))
+            py = int(y + r - (r - 3) * math.cos(roll_rad))
+            p.setBrush(self.WHITE)
+            p.drawPolygon(QPolygonF([
+                QPoint(px, py - 3),
+                QPoint(px + 3, py + 2),
+                QPoint(px - 3, py + 2),
+            ]))
+        if label:
+            p.setPen(QColor(255, 180, 60, 220))
+            p.setFont(QFont(self.FONT_NAME, 8, QFont.Bold))
+            p.drawText(int(x + r - 20), int(y + r + 30), label)
 
     def _circle_region(self, cx, cy, r):
         from PyQt5.QtGui import QRegion

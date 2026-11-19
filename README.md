@@ -149,6 +149,25 @@ Changes take effect after a HUD restart. **Editing via the launcher GUI is recom
 优先级：环境变量 > json > 默认值。
 Precedence: environment variables > JSON > built-in defaults.
 
+### EST 姿态估算 / EST attitude estimation
+
+游戏 2.59.0 之后，MiG-35 / JF-17 / Z-10A 等机型不再通过 `/indicators` 提供
+`aviahorizon_pitch` / `aviahorizon_roll` / `bank`。此时 HUD 用 `/state` 估算俯仰：
+`pitch = asin(Vy / (TAS/3.6)) + AoA`，指数平滑 τ=0.25s；并用航向变化率给出坡度
+**方向**（只有 `LEFT` / `RIGHT`，不画数值、不画指针）。`|Ny-1| > 4` 的高机动下估算
+不可信，标识降级为 `EST?`；无仪表数据时先保持上一帧 2 秒，之后标 `NO ATT`，
+不编造姿态。算法思路来自 `unknown-obj/wt-map`（其文档致谢
+`A-common-Chinese/WarThunder-8111-HUD`）。
+
+- 默认极简面板只在标题栏右侧显示 `EST` / `EST?` / `NO ATT` 来源标识，不重复游戏内姿态仪读数。
+- `WT_HUD_FULL=1` 的详细面板额外显示 `PITCH +x.xd` 与 `BANK LEFT/RIGHT`。
+- 真实仪表可用时自动切回实测值，不标 EST；逻辑集中在 `wt_common.AttitudeEstimator`，
+  可离线回归测试。
+
+After game 2.59.0 some airframes no longer expose `aviahorizon_*` fields. The HUD then
+estimates pitch from `/state`, marks the value `EST` / `EST?` on the panel, and only ever
+shows a bank **direction** hint — never a fabricated bank angle or pointer.
+
 ### 轰炸战区 BOMB 层 / Bomb-zone (BOMB) layer
 
 轰炸机 / 对地支援在 **全真(RB)/模拟(SB)** 模式下的痛点：普通目标列表与边缘箭头只在
