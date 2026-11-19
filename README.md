@@ -157,7 +157,7 @@ Precedence: environment variables > JSON > built-in defaults.
 **方向**（只有 `LEFT` / `RIGHT`，不画数值、不画指针）。`|Ny-1| > 4` 的高机动下估算
 不可信，标识降级为 `EST?`；无仪表数据时先保持上一帧 2 秒，之后标 `NO ATT`，
 不编造姿态。算法思路来自 `unknown-obj/wt-map`（其文档致谢
-`A-common-Chinese/WarThunder-8111-HUD`）。
+`A-common-Chinese/WarThunder-8111-HUD`），完整署名见文末「致谢 / Acknowledgements」。
 
 - 默认极简面板只在标题栏右侧显示 `EST` / `EST?` / `NO ATT` 来源标识，不重复游戏内姿态仪读数。
 - `WT_HUD_FULL=1` 的详细面板额外显示 `PITCH +x.xd` 与 `BANK LEFT/RIGHT`。
@@ -317,7 +317,7 @@ Status area (game detection / mode / HUD process) + buttons (air / ground / stop
 ## 测试 / Tests
 
 > 离线测试脚本统一放在本地目录 `_local_tests/`（`test_detect_mode.py`、
-> `test_map_unavailable.py`、`test_power_curve.py`），该目录已被 `.gitignore` 忽略、
+> `test_map_unavailable.py`、`test_est_attitude.py`、`test_power_curve.py`），该目录已被 `.gitignore` 忽略、
 > **不随仓库分发**，clone 后没有这些脚本属正常现象；测试生成的 CSV 落在 `_local_tests/out/`。
 > Offline tests live in the git-ignored `_local_tests/` folder and are not distributed with the repo.
 
@@ -329,3 +329,21 @@ Status area (game detection / mode / HUD process) + buttons (air / ground / stop
 > 完整备份在 `.workbuddy\_trash_20260921_backup.zip`，需要时从压缩档取回。
 > Historical research/debug scripts were removed on 2026-11-08; a full backup is kept in
 > `.workbuddy\_trash_20260921_backup.zip`.
+
+---
+
+## 致谢 / Acknowledgements
+
+本项目只读取游戏自带的 `localhost:8111` 遥测，能少走很多弯路，离不开下面这些公开分享的资料与实现。在此一并致谢；若署名或说明有遗漏，欢迎提 issue 补充。
+This project stands on publicly shared work. All credit goes to the authors below; corrections and additions are welcome via issues.
+
+| 对象 / Who | 感谢的原因 / What we learned |
+|---|---|
+| **Gaijin Entertainment / War Thunder** | 游戏内置的本地 WebUI 遥测接口（`/state`、`/indicators`、`/map_obj.json`、`/map_info.json`、`map.img` 等）——本项目**唯一的数据来源**。本项目只做 HTTP GET，不读内存、不注入、不拆包、不修改游戏文件。<br>The built-in local WebUI telemetry, this project's sole data source. Plain HTTP GET only. |
+| **[`unknown-obj/wt-map`](https://github.com/unknown-obj/wt-map)**（MIT） | 2026-11 合并的 **EST 姿态估算**主要参考其公开代码与技术文档：`Vy / TAS` 求航迹倾角再叠加 `AoA`、指数平滑、高过载下置信度降级（`EST?`）、用航向变化率只给坡度方向提示、无数据保持上一帧、断联状态机、`map_info` 坐标自适应等思路。<br>Source of the EST attitude algorithm, smoothing, confidence degradation, bank-direction-only hint and disconnect handling. |
+| **`A-common-Chinese/WarThunder-8111-HUD`**（作者「缩写 ACC」） | EST 估算思路的**原始出处**，由 `wt-map` 的姿态估算说明文档明确致谢；本项目沿这条链一并致谢。<br>Credited by wt-map as the origin of the EST attitude estimation method. |
+| `wtapc.org` | 基于拆包飞行模型的理论推力/功率曲线，是动力曲线工具「实测 vs 理论」对照的参照系。<br>Theoretical flight-model curves referenced by the measured power-curve tool. |
+| **Python / Qt for Python (PyQt5)** 与 8111 开源社区 | 透明覆盖层、离屏渲染，以及社区项目（WTRTI 等）与论坛里公开的接口字段、坐标换算、端点可用性经验，省掉了大量试错。<br>Qt/PyQt5 and the wider 8111 community for openly documented fields, coordinate conventions and endpoint behaviour. |
+
+**定位说明 / Scope**：上述参考项目多为「平板 / 第二屏」工具，且各自对使用边界有自己的判断。本项目的屏幕覆盖层实现、面板设计、守护进程与布局配置均为独立编写，参考范围仅限**公开的算法思路与接口事实**；两者定位不同，此处不作合规定性。
+Most referenced projects are second-screen tools with their own scope decisions. This repo's overlay, panels, daemon and layout code are written independently; only publicly documented algorithms and API facts were referenced.
