@@ -15,8 +15,8 @@ All data comes from the game client's built-in local HTTP service **`localhost:8
 
 | 项 / Item | 要求 / Requirement |
 |---|---|
-| Python | **必须**用工作区虚拟环境 `J:\Quant\.venv_wt\Scripts\python.exe`；GUI 用同目录的 `pythonw.exe`（无控制台）。受管 Python 的 site-packages 会被环境重置周期性清空，别用它<br>**Must** use the workspace venv `J:\Quant\.venv_wt\Scripts\python.exe` (GUI uses `pythonw.exe`, no console). The managed interpreter's site-packages gets wiped periodically — do not use it |
-| PyQt5 | 5.15.x，装在 `.venv_wt`。重建 venv 后：`J:\Quant\.venv_wt\Scripts\python.exe -m pip install PyQt5`<br>Installed in `.venv_wt`; reinstall with the venv python after recreating it |
+| Python | **必须**用项目根目录下的虚拟环境 `.venv_wt\Scripts\python.exe`；GUI 用同目录的 `pythonw.exe`（无控制台）。受管 Python 的 site-packages 会被环境重置周期性清空，别用它<br>**Must** use the repo-local venv `.venv_wt\Scripts\python.exe` (GUI uses `pythonw.exe`, no console). The managed interpreter's site-packages gets wiped periodically — do not use it |
+| PyQt5 | 5.15.x，装在 `.venv_wt`。重建 venv 后：`.venv_wt\Scripts\python.exe -m pip install PyQt5`<br>Installed in `.venv_wt`; reinstall with the venv python after recreating it |
 | 游戏 / Game | 运行中且 8111 端口可用；窗口化/无边框<br>Running with port 8111 alive; windowed / borderless |
 
 ---
@@ -39,10 +39,12 @@ a daemon picks the air or ground HUD per vehicle and **clears it when the game e
 | `start_power_curve.bat` | 动力曲线窗口 / Power-curve window | 独立工具，与 HUD 互不影响<br>Standalone tool; independent of the HUD |
 | `wt_air_hud\start_air_hud.bat` | 仅空战 HUD / Air HUD only | 直接拉起空战覆盖层<br>Launches the air overlay directly |
 
-命令行方式（等效于双击 vbs）/ Command line (equivalent to double-clicking the vbs):
+命令行方式（等效于双击 vbs）/ Command line (equivalent to double-clicking the vbs)：
+以下命令均在**项目根目录**下执行，路径均为相对路径。
+All commands below run from the **repo root**; every path is relative.
 
 ```
-J:\Quant\.venv_wt\Scripts\pythonw.exe -u J:\Quant\wt_hud_launcher_gui.py
+.venv_wt\Scripts\pythonw.exe -u wt_hud_launcher_gui.py
 ```
 
 `pythonw.exe` 无控制台；要抓 traceback 就换 `python.exe` 并把输出重定向到 `wt_gui_error.log`。
@@ -53,7 +55,7 @@ J:\Quant\.venv_wt\Scripts\pythonw.exe -u J:\Quant\wt_hud_launcher_gui.py
 ## 目录结构 / Project Layout
 
 ```
-J:\Quant\
+<项目根目录> / <repo root>
 ├── wt_air_hud\              空战 HUD（主项目）/ Air-battle HUD (main project)
 │   ├── main.py              入口 / Entry point
 │   ├── hud_overlay.py       覆盖层渲染（面板/箭头/警报）/ Overlay rendering (panels/arrows/alerts)
@@ -69,9 +71,7 @@ J:\Quant\
 ├── wt_foreground.py         前台检测（游戏进程 aces.exe）/ Foreground detection (aces.exe)
 ├── wt_power_curve.py        动力曲线记录器（独立工具）/ Power-curve recorder (standalone)
 ├── _local_tests\            本地离线测试区（脚本 + 产物，git 忽略）/ Local tests (git-ignored)
-├── start_*.bat / *.vbs      各类启动脚本 / Launcher scripts
-└── daily_stock_analyzer\    另一个独立项目（A股分析，见其内部说明）
-                             Separate project (A-share market analysis; see its own docs)
+└── start_*.bat / *.vbs      各类启动脚本 / Launcher scripts
 ```
 
 ---
@@ -108,7 +108,7 @@ Threat list, ground targets, and detailed flight data are all off by default —
 
 ### 提交 / 推送卫生 / Push hygiene
 
-运行产物（日志、PID/心跳、缓存、数据库、截图、`.venv_wt`、`.workbuddy`、A股项目）全部在
+运行产物（日志、PID/心跳、缓存、数据库、截图、`.venv_wt`、`.workbuddy`）全部在
 `.gitignore` 中；离线测试脚本及其产物集中在 `_local_tests/`，整个目录不入库。提交时只 add
 源码、启动脚本与 `*.example.json` 模板，**不要用 `git add -A`**；推送前用
 `git status --short` 确认没有本地设置或调试产物混进来。
@@ -223,7 +223,7 @@ How to sample: **full-throttle climb** for the max-thrust curve, or **level flig
 离线冒烟测试（不需要游戏）/ Offline smoke test (no game required):
 
 ```
-J:\Quant\.venv_wt\Scripts\python.exe J:\Quant\_local_tests/test_power_curve.py
+.venv_wt\Scripts\python.exe _local_tests/test_power_curve.py
 ```
 
 5 组检查：窗口 show 不崩、坐标 int、四种数据形态重绘、X 轴循环、CSV 导出。
@@ -324,11 +324,6 @@ Status area (game detection / mode / HUD process) + buttons (air / ground / stop
 | 命令 / Command | 覆盖 / Coverage |
 |---|---|
 | `python _local_tests/test_power_curve.py` | 动力曲线（offscreen，无需游戏），5 组检查<br>Power curve (offscreen, no game), 5 checks |
-
-> 历史调研/调试脚本（`test_arrows.py`、`test_hud_layout.py`、8111 快照、旧截图与调研 html）已在 2026-11-08 清理，
-> 完整备份在 `.workbuddy\_trash_20260921_backup.zip`，需要时从压缩档取回。
-> Historical research/debug scripts were removed on 2026-11-08; a full backup is kept in
-> `.workbuddy\_trash_20260921_backup.zip`.
 
 ---
 
